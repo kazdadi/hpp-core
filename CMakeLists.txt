@@ -93,6 +93,7 @@ SET(${PROJECT_NAME}_HEADERS
   include/hpp/core/path-optimization/gradient-based.hh
   include/hpp/core/path-optimization/linear-constraint.hh
   include/hpp/core/path-optimization/partial-shortcut.hh
+  include/hpp/core/path-optimization/quadratic-program.hh
   include/hpp/core/path-optimization/config-optimization.hh
   include/hpp/core/path-optimization/simple-time-parameterization.hh
   include/hpp/core/path-optimization/spline-gradient-based.hh
@@ -100,6 +101,7 @@ SET(${PROJECT_NAME}_HEADERS
   include/hpp/core/path-optimization/spline-gradient-based-abstract.hh
   include/hpp/core/path-optimizer.hh
   include/hpp/core/path-planner.hh
+  include/hpp/core/path-planner/k-prm-star.hh
   include/hpp/core/path-validation.hh
   include/hpp/core/path-validation-report.hh
   include/hpp/core/path-vector.hh

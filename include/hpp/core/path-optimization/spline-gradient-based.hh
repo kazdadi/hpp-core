@@ -77,8 +77,18 @@ namespace hpp {
 
           SplineGradientBased (const Problem& problem);
 
-          // Constraint creation
+          /// \name Constraint creation
+          /// \{
 
+          /// Compute a conservative linear representation of the constraints.
+          ///
+          /// It determines:
+          /// \li which DoFs can be computed explicitely. These DoFs are removed
+          ///     from the variables and computed explicitely.
+          /// \li which DoFs are constrained implicitely. These DoFs are removed
+          ///     from the variables and are set constant.
+          /// \li which DoFs are not constrained. These DoFs are kept as
+          ///     variables for optimization.
           virtual void addProblemConstraints (const PathVectorPtr_t& init, const Splines_t& splines, LinearConstraint& lc, SplineOptimizationDatas_t& sods) const;
 
           void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
@@ -91,10 +101,11 @@ namespace hpp {
               const value_type& guessThr = -1,
               const bool& useExplicitInput = false) const;
 
+          /// \}
+
           bool checkOptimum_;
 
         private:
-          struct QuadraticProblem;
           typedef std::vector <std::pair <CollisionPathValidationReportPtr_t,
                   std::size_t> > Reports_t;
           struct CollisionFunctions;
@@ -111,19 +122,6 @@ namespace hpp {
               const SplinePtr_t& spline, const SplineOptimizationData& sod) const;
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
-
-          /// \todo static
-          void copy (const Splines_t& in, Splines_t& out) const;
-
-          /// Returns res = (1 - alpha) * a + alpha * b
-          void updateSplines (Splines_t& spline, const vector_t& param) const;
-
-          /// Returns res = (1 - alpha) * a + alpha * b
-          /// \todo static
-          void interpolate (const Splines_t& a, const Splines_t& b,
-              const value_type& alpha, Splines_t& res) const;
-
-          void copyParam (const Splines_t& in, Splines_t& out) const;
 
           // Continuity constraints
           // matrix_t Jcontinuity_;

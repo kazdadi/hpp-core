@@ -45,6 +45,7 @@
 #include <hpp/core/discretized-collision-checking.hh>
 #include <hpp/core/locked-joint.hh>
 #include <hpp/core/numerical-constraint.hh>
+#include <hpp/core/path-planner/k-prm-star.hh>
 #include <hpp/core/path-projector/global.hh>
 #include <hpp/core/path-projector/dichotomy.hh>
 #include <hpp/core/path-projector/progressive.hh>
@@ -115,15 +116,6 @@ namespace hpp {
       const Model obsModel = initObstacleModel();
     }
 
-    // Struct that constructs an empty shared pointer to PathOptimizer.
-    struct NoneOptimizer
-    {
-      static PathOptimizerPtr_t create (const Problem&)
-      {
-	return PathOptimizerPtr_t ();
-      }
-    }; // struct NoneOptimizer
-
     // Struct that constructs an empty shared pointer to PathProjector.
     struct NonePathProjector
     {
@@ -180,19 +172,14 @@ namespace hpp {
       pathPlanners.add ("DiffusingPlanner",     DiffusingPlanner::createWithRoadmap);
       pathPlanners.add ("VisibilityPrmPlanner", VisibilityPrmPlanner::createWithRoadmap);
       pathPlanners.add ("BiRRTPlanner", BiRRTPlanner::createWithRoadmap);
+      pathPlanners.add ("kPRM*", pathPlanner::kPrmStar::createWithRoadmap);
 
       configurationShooters.add ("BasicConfigurationShooter", BasicConfigurationShooter::create);
 
-      // TODO "WeighedDistance" is kept for backward compatibility
-      distances.add ("WeighedDistance", WeighedDistance::createFromProblem);
       distances.add ("Weighed",         WeighedDistance::createFromProblem);
       distances.add ("ReedsShepp",      bind (distance::ReedsShepp::create, _1));
 
-      // TODO "SteeringMethodStraight" is kept for backward compatibility
-      steeringMethods.add ("SteeringMethodStraight",
-          Factory<steeringMethod::Straight>::create);
-      steeringMethods.add ("Straight",
-          Factory<steeringMethod::Straight>::create);
+      steeringMethods.add ("Straight",   Factory<steeringMethod::Straight>::create);
       steeringMethods.add ("ReedsShepp", steeringMethod::ReedsShepp::createWithGuess);
       steeringMethods.add ("Dubins",     steeringMethod::Dubins::createWithGuess);
       steeringMethods.add ("Snibud",     steeringMethod::Snibud::createWithGuess);
@@ -204,7 +191,6 @@ namespace hpp {
       pathOptimizers.add ("PartialShortcut",    pathOptimization::PartialShortcut::create);
       pathOptimizers.add ("ConfigOptimization", pathOptimization::ConfigOptimization::create);
       pathOptimizers.add ("SimpleTimeParameterization", pathOptimization::SimpleTimeParameterization::create);
-      pathOptimizers.add ("None",               NoneOptimizer::create); // TODO: Delete me
 
       // pathOptimizers.add ("SplineGradientBased_cannonical1",pathOptimization::SplineGradientBased<path::CanonicalPolynomeBasis, 1>::create);
       // pathOptimizers.add ("SplineGradientBased_cannonical2",pathOptimization::SplineGradientBased<path::CanonicalPolynomeBasis, 2>::create);
@@ -864,6 +850,23 @@ namespace hpp {
       for (PathOptimizers_t::iterator it = pathOptimizers_.begin ();
 	   it != pathOptimizers_.end (); ++it) {
 	(*it)->interrupt ();
+      }
+    }
+
+    void ProblemSolver::addObstacle (const DevicePtr_t& device,
+				     bool collision, bool distance)
+    {
+      device->computeForwardKinematics();
+      device->updateGeometryPlacements();
+      const std::string& prefix = device->name();
+
+      // Detach objects from joints
+      pinocchio::DeviceObjectVector& objects = device->objectVector();
+      for (pinocchio::DeviceObjectVector::iterator itObj = objects.begin();
+          itObj != objects.end(); ++itObj) {
+        addObstacle (prefix + (*itObj)->name (),
+            *(*itObj)->fcl (),
+            collision, distance);
       }
     }
 
