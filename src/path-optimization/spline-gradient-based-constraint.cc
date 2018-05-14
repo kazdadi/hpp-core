@@ -464,8 +464,8 @@ namespace hpp {
       template <int _PB, int _SO>
       PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
       {
-        hppDout (info, "optimize init");
         value_type gradientEpsilon = 0.0001;
+        size_type numberOfConstraints;
         PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
         path->flatten(tmp);
         // Remove zero length path
@@ -489,52 +489,86 @@ namespace hpp {
         const size_type orderContinuity = MaxContinuityOrder;
 
         LinearConstraint constraint (nParameters * rDof, 0);
+        LinearConstraint jacobianConstraint (nParameters * rDof, 0);
+        matrix_t constraintJacobian;
         SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
-        hppDout (info, "optimize init 2");
         this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
-        hppDout (info, "optimize init 3");
-        ConstraintSetPtr_t cs = path->constraints();
-        hppDout (info, "optimize init 4");
-        ConfigProjectorPtr_t configProjector = cs->configProjector();
 
         vector_t initialTangentVector;
         vector_t endTangentVector;
 
-        hppDout (info, "before cost");
         // 4
         // TODO add weights
         SquaredLength<Spline, 1> cost (splines, rDof, rDof);
         value_type costValue;
-        vector_t gradient;
+        vector_t gradient(Spline::NbCoeffs*rDof*splines.size());
 
-        hppDout (info, "before loop");
         while (true)
         {
           cost.value(costValue, splines);
-          hppDout (info, "Cost is " << costValue);
+          hppDout (info, "Cost " << costValue << " Derivative size " << cost.inputDerivativeSize_);
           cost.jacobian(gradient, splines);
-
+          
           bool feasible = constraint.decompose (true);
           if (!feasible) break;
 
-          gradient = constraint.PK*gradient;
+          gradient = constraint.PK*constraint.PK.transpose()*gradient;
+          hppDout (info, "||J*gradient|| " << (constraint.J*gradient).norm());
           // TODO:
-          for (std::size_t i = 0; i < splines.size(); ++i)
+          for (std::size_t i = 1; i < splines.size(); ++i)
           {
-            configProjector->projectVectorOnKernel(splines[i]->initial(),
-              gradient.segment(Spline::NbCoeffs*rDof*i, rDof),
-              gradient.segment(Spline::NbCoeffs*rDof*i, rDof));
-            configProjector->projectVectorOnKernel(splines[i]->end(),
-              gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof),
-              gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof));
+            ConstraintSetPtr_t cs = splines[i]->constraints();
+            ConfigProjectorPtr_t configProj;
+            if (cs)
+            {
+              configProj = cs->configProjector();
+              numberOfConstraints = std::distance(cs->begin(), cs->end())-1;
+              hppDout (info, "Nb constraints " << numberOfConstraints);
+              hppDout (info, "First constraint " << ((cs->begin()==cs->end()) ? "true" : "false"));
+              if (numberOfConstraints > 0)
+              {
+                hppDout (info, configProj->sigma());
+                vector_t constraintValue (numberOfConstraints);
+                matrix_t constraintJacobian (numberOfConstraints, Spline::NbCoeffs*splines.size()*rDof);
+                configProj->computeValueAndJacobian(splines[i]->initial(), constraintValue, 
+                  constraintJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
+              }
+            }
+            // configProj->projectVectorOnKernel(splines[i]->initial(),
+            //   gradient.segment(Spline::NbCoeffs*rDof*i, rDof),
+            //   gradient.segment(Spline::NbCoeffs*rDof*i, rDof));
+            // configProj->projectVectorOnKernel(splines[i]->end(),
+            //   gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof),
+            //   gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof));
+
           }
+          hppDout (info, "Gradient " << gradient.norm());
           if (gradient.norm() < gradientEpsilon) break;
           step(splines, gradient, .1, splines);
 
           for (std::size_t i = 0; i < splines.size(); ++i)
           {
-//            cs->apply(splines[i]->rowParameters()[0]);
-//            cs->apply(splines[i]->rowParameters()[1]);
+            ConstraintSetPtr_t cs = splines[i]->constraints();
+            if (cs)
+            {
+              ConfigProjectorPtr_t configProjector = cs->configProjector();
+            }
+            Configuration_t initial(splines[i]->base());
+            Configuration_t end(splines[i]->base());
+
+            integrate(problem().robot(),
+              splines[i]->base(),
+              splines[i]->parameters().row(0),
+              initial);
+
+            integrate(problem().robot(),
+              splines[i]->base(),
+              splines[i]->parameters().row(Spline::NbCoeffs-1),
+              end);
+
+            cs->apply(initial);
+            cs->apply(end);
+            
 
 //            if (orderContinuity > 2)
 //            {
@@ -608,7 +642,7 @@ namespace hpp {
         size_type rDof = a[0]->parameterSize();
         for (std::size_t i = 0; i < a.size(); ++i) {
           res[i]->rowParameters(a[i]->rowParameters());
-          res[i]->parameterIntegrate(stepSize*gradient.segment(Spline::NbCoeffs*rDof*i,Spline::NbCoeffs*rDof));
+          res[i]->parameterIntegrate(-stepSize*gradient.segment(Spline::NbCoeffs*rDof*i,Spline::NbCoeffs*rDof));
         }
       }
 
