@@ -21,6 +21,7 @@ CMAKE_MINIMUM_REQUIRED(VERSION 2.6)
 
 SET(CXX_DISABLE_WERROR TRUE)
 SET(DOXYGEN_USE_MATHJAX YES)
+SET(DCMAKE_INSTALL_PREFIX $DEVEL_HPP_DIR/install/)
 
 INCLUDE(cmake/base.cmake)
 INCLUDE(cmake/boost.cmake)
@@ -96,6 +97,7 @@ SET(${PROJECT_NAME}_HEADERS
   include/hpp/core/path-optimization/config-optimization.hh
   include/hpp/core/path-optimization/simple-time-parameterization.hh
   include/hpp/core/path-optimization/spline-gradient-based.hh
+  include/hpp/core/path-optimization/spline-gradient-based-constraint.hh
   include/hpp/core/path-optimization/spline-gradient-based-abstract.hh
   include/hpp/core/path-optimizer.hh
   include/hpp/core/path-planner.hh

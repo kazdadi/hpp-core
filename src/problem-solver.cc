@@ -52,6 +52,7 @@
 #include <hpp/core/path-projector/recursive-hermite.hh>
 #include <hpp/core/path-optimization/gradient-based.hh>
 #include <hpp/core/path-optimization/spline-gradient-based.hh>
+#include <hpp/core/path-optimization/spline-gradient-based-constraint.hh>
 #include <hpp/core/path-optimization/partial-shortcut.hh>
 #include <hpp/core/path-optimization/config-optimization.hh>
 #include <hpp/core/path-optimization/simple-time-parameterization.hh>
@@ -197,7 +198,8 @@ namespace hpp {
       pathOptimizers.add ("SplineGradientBased_bezier1",pathOptimization::SplineGradientBased<path::BernsteinBasis, 1>::create);
       // pathOptimizers.add ("SplineGradientBased_bezier2",pathOptimization::SplineGradientBased<path::BernsteinBasis, 2>::create);
       pathOptimizers.add ("SplineGradientBased_bezier3",pathOptimization::SplineGradientBased<path::BernsteinBasis, 3>::create);
-
+      pathOptimizers.add ("SplineGradientBasedConstraint",pathOptimization::SplineGradientBasedConstraint<path::BernsteinBasis, 1>::create);
+      pathOptimizers.add ("SplineGradientBasedConstraint3",pathOptimization::SplineGradientBasedConstraint<path::BernsteinBasis, 3>::create);
       // Store path validation methods in map.
       pathValidations.add ("Discretized", DiscretizedCollisionChecking::create);
       pathValidations.add ("Progressive", continuousCollisionChecking::Progressive::create);
