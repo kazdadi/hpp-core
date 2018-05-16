@@ -464,8 +464,9 @@ namespace hpp {
       template <int _PB, int _SO>
       PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
       {
-        value_type gradientEpsilon = 0.0001;
+        value_type gradientEpsilon = 0.01;
         size_type numberOfConstraints;
+        size_type constraintIndex = 0;
         PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
         path->flatten(tmp);
         // Remove zero length path
@@ -490,7 +491,8 @@ namespace hpp {
 
         LinearConstraint constraint (nParameters * rDof, 0);
         LinearConstraint jacobianConstraint (nParameters * rDof, 0);
-        matrix_t constraintJacobian;
+        matrix_t constraintJacobian (0, Spline::NbCoeffs*splines.size()*rDof);
+        vector_t constraintValue;
         SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
         this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
 
@@ -509,12 +511,6 @@ namespace hpp {
           hppDout (info, "Cost " << costValue << " Derivative size " << cost.inputDerivativeSize_);
           cost.jacobian(gradient, splines);
           
-          bool feasible = constraint.decompose (true);
-          if (!feasible) break;
-
-          gradient = constraint.PK*constraint.PK.transpose()*gradient;
-          hppDout (info, "||J*gradient|| " << (constraint.J*gradient).norm());
-          // TODO:
           for (std::size_t i = 1; i < splines.size(); ++i)
           {
             ConstraintSetPtr_t cs = splines[i]->constraints();
@@ -528,33 +524,53 @@ namespace hpp {
               if (numberOfConstraints > 0)
               {
                 hppDout (info, configProj->sigma());
-                vector_t constraintValue (numberOfConstraints);
-                matrix_t constraintJacobian (numberOfConstraints, Spline::NbCoeffs*splines.size()*rDof);
+                constraint.J.conservativeResize(constraint.J.rows()+2*numberOfConstraints, Eigen::NoChange);
+                constraint.J.bottomRows(2*numberOfConstraints).setZero();
+                constraintValue.conservativeResize (2*numberOfConstraints);
                 configProj->computeValueAndJacobian(splines[i]->initial(), constraintValue, 
-                  constraintJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
+                  constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
+                  numberOfConstraints, rDof));
+                constraintIndex += numberOfConstraints;
+                configProj->computeValueAndJacobian(splines[i]->end(), constraintValue, 
+                  constraintJacobian.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof, 
+                  numberOfConstraints, rDof));
+                constraintIndex += numberOfConstraints;
               }
             }
-            // configProj->projectVectorOnKernel(splines[i]->initial(),
-            //   gradient.segment(Spline::NbCoeffs*rDof*i, rDof),
-            //   gradient.segment(Spline::NbCoeffs*rDof*i, rDof));
-            // configProj->projectVectorOnKernel(splines[i]->end(),
-            //   gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof),
-            //   gradient.segment(Spline::NbCoeffs*rDof*(i+1)-rDof, rDof));
-
           }
-          hppDout (info, "Gradient " << gradient.norm());
+          bool feasible = constraint.decompose (true);
+          if (!feasible) break;
+          gradient = constraint.PK*constraint.PK.transpose()*gradient;
+          
+          hppDout (info, "J*Gradient norm " << (constraint.J*gradient).norm());
+          hppDout (info, "Gradient norm " << gradient.norm());
           if (gradient.norm() < gradientEpsilon) break;
           step(splines, gradient, .1, splines);
 
-          for (std::size_t i = 0; i < splines.size(); ++i)
+          Configuration_t initial;
+          Configuration_t end;
+          vector_t initialParameter;
+          vector_t endParameter;
+          ConstraintSetPtr_t initialConstraints;
+          ConstraintSetPtr_t endConstraints;
+          matrix_t parameters;
+
+          for (std::size_t i = 1; i < splines.size()-1; ++i)
           {
-            ConstraintSetPtr_t cs = splines[i]->constraints();
-            if (cs)
-            {
-              ConfigProjectorPtr_t configProjector = cs->configProjector();
+            initialConstraints = ConstraintSet::createCopy (splines[i]->constraints());
+            endConstraints = ConstraintSet::createCopy (splines[i]->constraints());
+            
+            for (Constraints_t::iterator it = splines[i-1]->constraints()->begin();
+            it != splines[i-1]->constraints()->end(); ++it) {
+              initialConstraints->addConstraint(*it);
             }
-            Configuration_t initial(splines[i]->base());
-            Configuration_t end(splines[i]->base());
+            for (Constraints_t::iterator it = splines[i+1]->constraints()->begin();
+            it != splines[i+1]->constraints()->end(); ++it) {
+              endConstraints->addConstraint(*it);
+            }
+
+            initial = splines[i]->base();
+            end = splines[i]->base();
 
             integrate(problem().robot(),
               splines[i]->base(),
@@ -566,8 +582,20 @@ namespace hpp {
               splines[i]->parameters().row(Spline::NbCoeffs-1),
               end);
 
-            cs->apply(initial);
-            cs->apply(end);
+            initialConstraints->apply(initial);
+            endConstraints->apply(end);
+            hppDout (info, "Before resize");
+            parameters.resize(Spline::NbCoeffs, rDof);
+            hppDout (info, "After resize");
+            parameters = splines[i]->parameters();
+            hppDout (info, "After copy");
+            difference(problem().robot(), initial, splines[i]->base(), initialParameter);
+            difference(problem().robot(), end, splines[i]->base(), endParameter);
+            hppDout (info, "After difference");
+            parameters.row(0) = initialParameter;
+            parameters.row(Spline::NbCoeffs-1) = endParameter;
+
+            splines[i]->parameters(parameters);
             
 
 //            if (orderContinuity > 2)
