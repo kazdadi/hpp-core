@@ -549,8 +549,8 @@ namespace hpp {
 
           Configuration_t initial;
           Configuration_t end;
-          vector_t initialParameter;
-          vector_t endParameter;
+          vector_t initialParameter(rDof);
+          vector_t endParameter(rDof);
           ConstraintSetPtr_t initialConstraints;
           ConstraintSetPtr_t endConstraints;
           matrix_t parameters;
@@ -584,14 +584,15 @@ namespace hpp {
 
             initialConstraints->apply(initial);
             endConstraints->apply(end);
-            hppDout (info, "Before resize");
             parameters.resize(Spline::NbCoeffs, rDof);
-            hppDout (info, "After resize");
             parameters = splines[i]->parameters();
-            hppDout (info, "After copy");
+
             difference(problem().robot(), initial, splines[i]->base(), initialParameter);
             difference(problem().robot(), end, splines[i]->base(), endParameter);
-            hppDout (info, "After difference");
+            hppDout (info, "Before parameter assignment, parameters shape " 
+              << parameters.rows() << ", " << parameters.cols() << ", vectors size "
+              << initialParameter.size() << ", " << endParameter.size());
+
             parameters.row(0) = initialParameter;
             parameters.row(Spline::NbCoeffs-1) = endParameter;
 
