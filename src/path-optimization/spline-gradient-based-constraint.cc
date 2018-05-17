@@ -518,21 +518,27 @@ namespace hpp {
             if (cs)
             {
               configProj = cs->configProjector();
-              numberOfConstraints = std::distance(cs->begin(), cs->end())-1;
+              numberOfConstraints = std::distance(cs->begin(), cs->end());
               hppDout (info, "Nb constraints " << numberOfConstraints);
-              hppDout (info, "First constraint " << ((cs->begin()==cs->end()) ? "true" : "false"));
+	      hppDout (info, "First constraint " << (*(cs->begin()))->name());
+
               if (numberOfConstraints > 0)
               {
                 hppDout (info, configProj->sigma());
-                constraint.J.conservativeResize(constraint.J.rows()+2*numberOfConstraints, Eigen::NoChange);
+                constraint.J.conservativeResize(constraint.J.rows() + 2*numberOfConstraints, Eigen::NoChange);
                 constraint.J.bottomRows(2*numberOfConstraints).setZero();
+		constraint.b.conservativeResize(constraint.b.size() + 2*numberOfConstraints);
+		constraint.b.bottomRows(2*numberOfConstraints).setZero();
                 constraintValue.conservativeResize (2*numberOfConstraints);
+		// hppDout (info, "J size, " << constraint.J.rows() << " " << constraint.J.cols());
+		// hppDout (info, "block args " << constraintIndex << " " << rDof*Spline::NbCoeffs*i << " "
+		//  << numberOfConstraints << " " << rDof);
                 configProj->computeValueAndJacobian(splines[i]->initial(), constraintValue, 
                   constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
                   numberOfConstraints, rDof));
                 constraintIndex += numberOfConstraints;
                 configProj->computeValueAndJacobian(splines[i]->end(), constraintValue, 
-                  constraintJacobian.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof, 
+                  constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof, 
                   numberOfConstraints, rDof));
                 constraintIndex += numberOfConstraints;
               }
@@ -554,15 +560,17 @@ namespace hpp {
           ConstraintSetPtr_t initialConstraints;
           ConstraintSetPtr_t endConstraints;
           matrix_t parameters;
-
           for (std::size_t i = 1; i < splines.size()-1; ++i)
           {
             initialConstraints = ConstraintSet::createCopy (splines[i]->constraints());
             endConstraints = ConstraintSet::createCopy (splines[i]->constraints());
             
-            for (Constraints_t::iterator it = splines[i-1]->constraints()->begin();
+            for (Constraints_t::iterator it = (splines[i-1]->constraints())->begin();
             it != splines[i-1]->constraints()->end(); ++it) {
-              initialConstraints->addConstraint(*it);
+ 	      hppDout (info, "constraint " << (*it)->name());
+	      hppDout (info, "initial constraints " << initialConstraints->name());
+              initialConstraints->addConstraint(**it);
+	      hppDout (info, "constraint added");
             }
             for (Constraints_t::iterator it = splines[i+1]->constraints()->begin();
             it != splines[i+1]->constraints()->end(); ++it) {
@@ -581,6 +589,7 @@ namespace hpp {
               splines[i]->base(),
               splines[i]->parameters().row(Spline::NbCoeffs-1),
               end);
+	    hppDout (info, "After config projection");
 
             initialConstraints->apply(initial);
             endConstraints->apply(end);
