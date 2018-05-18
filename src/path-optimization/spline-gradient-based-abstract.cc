@@ -137,7 +137,8 @@ namespace hpp {
       (const InterpolatedPathPtr_t& path, Splines_t& splines) const
       {
         if (path->interpolationPoints().size() > 2) {
-          HPP_THROW (std::logic_error,
+          hppDout (warning,
+          //HPP_THROW (std::logic_error,
               "Projected path with more than 2 IPs are not supported. "
               << path->interpolationPoints().size() << ").");
         }
