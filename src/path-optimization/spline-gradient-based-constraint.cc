@@ -494,8 +494,6 @@ namespace hpp {
           SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
           this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
           size_type numberOfContinuityConstraints = constraint.J.rows();
-          vector_t initialTangentVector;
-          vector_t endTangentVector;
 
           // 4
           // TODO add weights
@@ -524,7 +522,6 @@ namespace hpp {
               if (cs)
               {
                 configProj = cs->configProjector();
-                hppDout (info, ((!configProj) ? "null pointer " : "valid pointer"));
 
                 if (configProj)
                 {
@@ -556,88 +553,7 @@ namespace hpp {
                 << " -- |grad| " << std::setw(10) << gradient.norm()
                 << " -- |J*grad| " << std::setw(12) << (constraint.J*gradient).norm());
             if (gradient.norm() < gradientEpsilon) break;
-
-            // TODO Separate step size for gradient descent and manifold walk
-            step(splines, gradient, .1, splines);
-
-            // TODO: Project on constraints in separate function
-            for (std::size_t i = 1; i < splines.size()-1; ++i)
-            {
-              ConfigProjectorPtr_t initialConstraints = ConfigProjector::createCopy (splines[i]->constraints()->configProjector());
-              ConfigProjectorPtr_t endConstraints = ConfigProjector::createCopy (splines[i]->constraints()->configProjector());
-              NumericalConstraints_t prevConstraints = splines[i-1]->constraints()->configProjector()->numericalConstraints();
-              NumericalConstraints_t nextConstraints = splines[i+1]->constraints()->configProjector()->numericalConstraints();
-
-              for (size_type i = 0; i < prevConstraints.size(); ++i) {
-                NumericalConstraintPtr_t prevConstraint = prevConstraints[i];
-                if (!initialConstraints->contains(prevConstraint)) {
-                  initialConstraints->add(prevConstraint);
-                }
-              }
-              for (size_type i = 0; i < nextConstraints.size(); ++i) {
-                NumericalConstraintPtr_t nextConstraint = nextConstraints[i];
-                if (!endConstraints->contains(nextConstraint)) {
-                  endConstraints->add(nextConstraint);
-                }
-              }
-
-              Configuration_t initial = splines[i]->base();
-              Configuration_t end = splines[i]->base();
-
-              integrate(problem().robot(),
-                  splines[i]->base(),
-                  splines[i]->parameters().row(0),
-                  initial);
-              integrate(problem().robot(),
-                  splines[i]->base(),
-                  splines[i]->parameters().row(Spline::NbCoeffs-1),
-                  end);
-
-              initialConstraints->apply(initial);
-              endConstraints->apply(end);
-              parameters.resize(Spline::NbCoeffs, rDof);
-              matrix_t parameters = splines[i]->parameters();
-
-              vector_t initialParameter(rDof);
-              vector_t endParameter(rDof);
-              difference(problem().robot(), initial, splines[i]->base(), initialParameter);
-              difference(problem().robot(), end, splines[i]->base(), endParameter);
-
-              parameters.row(0) = initialParameter;
-              parameters.row(Spline::NbCoeffs-1) = endParameter;
-
-              if (orderContinuity > 2)
-              {
-                beforeEnd = splines[i]->base();
-                end = splines[i]->base();
-
-                integrate(problem().robot(),
-                    splines[i]->base(),
-                    splines[i]->parameters().row(1),
-                    afterInitial);
-                integrate(problem().robot(),
-                    splines[i]->base(),
-                    splines[i]->parameters().row(Spline::NbCoeffs-2),
-                    beforeEnd);
-
-                initialConstraints->projectOnKernel(initial,
-                    afterInitial,
-                    initialTangentVector);
-                endConstraints->projectOnKernel(end,
-                    beforeEnd,
-                    endTangentVector);
-
-                afterInitial = integrate(problem().robot(), initial, initialTangentVector);
-                beforeEnd = integrate(problem().robot(), end, endTangentVector);
-
-                difference(problem().robot(), afterInitial, splines[i]->base(), afterInitialParameter);
-                difference(problem().robot(), beforeEnd, splines[i]->base(), beforeEndParameter);
-
-                parameters.row(1) = afterInitialParameter;
-                parameters.row(Spline::NbCoeffs-2) = beforeEndParameter;
-              }
-              splines[i]->parameters(parameters);
-            }
+            step(splines, -.1*gradient, (-.1*gradient).norm(), splines);
           }
           hppDout (info, "Finished after " << numberOfIterations << " iterations");
           return this->buildPathVector (splines);
@@ -687,17 +603,117 @@ namespace hpp {
           }
         }
 
+      // Calculates a projection of "a" on the problem constraints
+      // If "calculateResultDirection" is true, calculates a projection of "direction"
+      // on the tangent space of the projection of "a"
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::projectOnConstraints
-        (const Splines_t& a, vector_t direction, Splines_t res, vector_t projectedDirection) const
+        (const Splines_t& a, const vector_t direction, Splines_t res, vector_t resultDirection, bool calculatedResultDirection) const
         {
-          // TODO: Incomplete
-          assert (a.size() == res.size());
+          assert (a.size() == res.size() && direction.size() == resultDirection.size());
+          res = a;
+          resultDirection = direction;
+          size_type rDof = robot_->numberDof();
+          const size_type orderContinuity = int( (SplineOrder - 1) / 2);
+          for (std::size_t i = 1; i < res.size()-1; ++i)
+          {
+            ConfigProjectorPtr_t initialConstraints = ConfigProjector::createCopy (res[i]->constraints()->configProjector());
+            ConfigProjectorPtr_t endConstraints = ConfigProjector::createCopy (res[i]->constraints()->configProjector());
+            NumericalConstraints_t prevConstraints = res[i-1]->constraints()->configProjector()->numericalConstraints();
+            NumericalConstraints_t nextConstraints = res[i+1]->constraints()->configProjector()->numericalConstraints();
+
+            for (size_type j = 0; j < prevConstraints.size(); ++j) {
+              NumericalConstraintPtr_t prevConstraint = prevConstraints[i];
+              if (!initialConstraints->contains(prevConstraint)) {
+                initialConstraints->add(prevConstraint);
+              }
+            }
+            for (size_type j = 0; j < nextConstraints.size(); ++j) {
+              NumericalConstraintPtr_t nextConstraint = nextConstraints[i];
+              if (!endConstraints->contains(nextConstraint)) {
+                endConstraints->add(nextConstraint);
+              }
+            }
+
+            Configuration_t initial = res[i]->base();
+            Configuration_t end = res[i]->base();
+
+            integrate(problem().robot(),
+                res[i]->base(),
+                res[i]->parameters().row(0),
+                initial);
+            integrate(problem().robot(),
+                res[i]->base(),
+                res[i]->parameters().row(Spline::NbCoeffs-1),
+                end);
+
+            initialConstraints->apply(initial);
+            endConstraints->apply(end);
+            matrix_t parameters = res[i]->parameters();
+
+            vector_t initialParameter(rDof);
+            vector_t endParameter(rDof);
+            difference(problem().robot(), initial, res[i]->base(), initialParameter);
+            difference(problem().robot(), end, res[i]->base(), endParameter);
+
+            parameters.row(0) = initialParameter;
+            parameters.row(Spline::NbCoeffs-1) = endParameter;
+
+            if (orderContinuity > 2)
+            {
+              Configuration_t afterInitial = res[i]->base();
+              Configuration_t beforeEnd = res[i]->base();
+
+              integrate(problem().robot(),
+                  res[i]->base(),
+                  res[i]->parameters().row(1),
+                  afterInitial);
+              integrate(problem().robot(),
+                  res[i]->base(),
+                  res[i]->parameters().row(Spline::NbCoeffs-2),
+                  beforeEnd);
+
+              vector_t initialTangentVector;
+              vector_t endTangentVector;
+              initialConstraints->projectOnKernel(initial,
+                  afterInitial,
+                  initialTangentVector);
+              endConstraints->projectOnKernel(end,
+                  beforeEnd,
+                  endTangentVector);
+
+              integrate(problem().robot(), initial, initialTangentVector, afterInitial);
+              integrate(problem().robot(), end, endTangentVector, beforeEnd);
+
+              vector_t afterInitialParameter(rDof);
+              vector_t beforeEndParameter(rDof);
+              difference(problem().robot(), afterInitial, res[i]->base(), afterInitialParameter);
+              difference(problem().robot(), beforeEnd, res[i]->base(), beforeEndParameter);
+
+              parameters.row(1) = afterInitialParameter;
+              parameters.row(Spline::NbCoeffs-2) = beforeEndParameter;
+            }
+            res[i]->parameters(parameters);
+            if (calculatedResultDirection)
+            {
+              integrate(problem().robot(),
+                  res[i]->base(),
+                  res[i]->parameters().row(0),
+                  initial);
+              integrate(problem().robot(),
+                  res[i]->base(),
+                  res[i]->parameters().row(Spline::NbCoeffs-1),
+                  end);
+              initialConstraints->projectVectorOnKernel(initial, direction.segment(res.size()*Spline::NbCoeffs*rDof*i, rDof), resultDirection.segment(res.size()*Spline::NbCoeffs*rDof*i, rDof));
+              endConstraints->projectVectorOnKernel(end, direction.segment(res.size()*Spline::NbCoeffs*rDof*(i+1) - rDof, rDof), resultDirection.segment(res.size()*Spline::NbCoeffs*rDof*(i+1) - rDof, rDof));
+            }
+          }
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::manifoldStep
-        (const Splines_t& a, vector_t direction, Splines_t res, vector_t transportedDirection) const
+        (const Splines_t& a, const vector_t direction,
+         Splines_t res, vector_t transportedDirection, bool calculateTransportedDirection) const
         {
           assert (a.size() == res.size() && direction.size() == transportedDirection.size());
           // res = a + direction
@@ -706,31 +722,24 @@ namespace hpp {
             res[i]->rowParameters(a[i]->rowParameters());
             res[i]->parameterIntegrate(direction.segment(Spline::NbCoeffs*rDof*i,Spline::NbCoeffs*rDof));
           }
-          projectOnConstraints(res, direction, res, transportedDirection);
+          projectOnConstraints(res, direction, res, transportedDirection, calculateTransportedDirection);
+          if (calculateTransportedDirection){
           transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
+          }
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::step
         (const Splines_t& a, vector_t gradient, value_type stepSize,Splines_t& res) const
         {
-          // TODO: rewrite as iteration of manifold steps
-          assert (a.size() == res.size());
-          size_type rDof = a[0]->parameterSize();
-          for (std::size_t i = 0; i < a.size(); ++i) {
-            res[i]->rowParameters(a[i]->rowParameters());
-            res[i]->parameterIntegrate(-stepSize*gradient.segment(Spline::NbCoeffs*rDof*i,Spline::NbCoeffs*rDof));
-          }
-          // ------------
-          // New function
           assert (a.size() == res.size());
           res = a;
           while (gradient.norm() > stepSize)
           {
-            manifoldStep(res, stepSize/gradient.norm()*gradient, res, gradient);
+            manifoldStep(res, stepSize/gradient.norm()*gradient, res, gradient, true);
             gradient = (1 - stepSize/gradient.norm())*gradient;
           }
-          manifoldStep(res, gradient, res, gradient);
+          manifoldStep(res, gradient, res, gradient, false);
         }
 
       // ----------- Instanciate -------------------------------------------- //

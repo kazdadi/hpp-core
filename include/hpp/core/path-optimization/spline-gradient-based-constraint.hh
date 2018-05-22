@@ -125,6 +125,10 @@ namespace hpp {
 
           void step(const Splines_t& a, vector_t gradient, value_type stepSize,Splines_t& res) const;
 
+          void manifoldStep(const Splines_t& a, const vector_t direction, Splines_t res, vector_t transportedDirection, bool calculateTransportedDirection) const;
+
+          void projectOnConstraints (const Splines_t& a, const vector_t direction, Splines_t res, vector_t projectedDirection, bool calculatedProjectedDirection) const;
+
           void copyParam (const Splines_t& in, Splines_t& out) const;
 
           // Continuity constraints
