@@ -82,6 +82,12 @@ namespace hpp {
       /// \param cp shared pointer to object to copy
       static ConfigProjectorPtr_t createCopy (const ConfigProjectorPtr_t cp);
 
+      /// Return shared pointer to union
+      /// \param cp shared pointer to object to copy
+      /// \param otherCp shared pointer to object to add constraints from
+      static ConfigProjectorPtr_t createUnion (const ConfigProjectorPtr_t cp,
+          const ConfigProjectorPtr_t otherCp);
+
       /// return shared pointer to copy
       virtual ConstraintPtr_t copy () const;
 

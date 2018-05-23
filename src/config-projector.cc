@@ -132,6 +132,30 @@ namespace hpp {
       return shPtr;
     }
 
+    ConfigProjectorPtr_t
+    ConfigProjector::createUnion (const ConfigProjectorPtr_t cp, const ConfigProjectorPtr_t otherCp)
+    {
+      ConfigProjectorPtr_t unionCp;
+      if (cp) 
+      {
+        unionCp = createCopy (cp);
+        if (otherCp) 
+        {
+          for (size_type i = 0; i < otherCp->numericalConstraints().size(); ++i) {
+            NumericalConstraintPtr_t otherConstraint = otherCp->numericalConstraints()[i];
+            if (!unionCp->contains(otherConstraint)) {
+              unionCp->add(otherConstraint);
+            }
+          }
+        }
+      }
+      else 
+      {
+        if (otherCp) unionCp = createCopy (otherCp);
+      }
+      return unionCp;
+    }
+
     ConfigProjector::ConfigProjector (const DevicePtr_t& robot,
 				      const std::string& name,
 				      value_type _errorThreshold,
