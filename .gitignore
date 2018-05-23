@@ -1,0 +1,7 @@
+*.o
+*.so
+build/*
+build-rel/*
+*.swp
+*.swo
+*~
