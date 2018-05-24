@@ -464,7 +464,9 @@ namespace hpp {
       template <int _PB, int _SO>
         PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
         {
-          value_type gradientEpsilon = 0.001;
+          size_type maxIterations = problem().getParameter("SplineGradientBasedConstraint/maxIterations", size_type(200));
+          value_type gradStepSize = problem().getParameter("SplineGradientBasedConstraint/gradStepSize", value_type(.1));
+          value_type gradientEpsilon = problem().getParameter("SplineGradientBasedConstraint/gradientEpsilon", value_type(.01));
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
           // Remove zero length path
@@ -563,7 +565,7 @@ namespace hpp {
             if (gradient.norm() < gradientEpsilon) break;
             Splines_t oldSplines;
             Base::copy(splines, oldSplines);
-            step(splines, -.077*gradient, (-.077*gradient).norm(), splines);
+            step(splines, -gradStepSize*gradient, (-gradStepSize*gradient).norm(), splines);
           }
           hppDout (info, "Finished after " << numberOfIterations << " iterations");
           return this->buildPathVector (splines);
@@ -620,7 +622,7 @@ namespace hpp {
          bool calculatedResultDirection) const
         {
           assert (a.size() == res.size() && direction.size() == resultDirection.size());
-          res = a;
+          Base::copy(a, res);
           resultDirection = direction;
           size_type rDof = robot_->numberDof();
           const size_type orderContinuity = int( (SplineOrder - 1) / 2);
@@ -651,22 +653,29 @@ namespace hpp {
               //     res[i]->parameters().row(0),
               //     initial);
               Configuration_t initial = res[i]->initial();
+              Configuration_t oldInitial = a[i]->initial();
               initialConstraints->apply(initial);
+              // hppDout(info, "Difference after initial projection:\n" << initial - oldInitial);
               vector_t initialParameter(rDof);
               difference(problem().robot(), initial, res[i]->base(), initialParameter);
+              vector_t oldInitialParameter = parameters.row(0);
               parameters.row(0) = initialParameter;
-              if (orderContinuity > 1)
+              // hppDout(info, "Difference after initial projection - parameter:\n" << initialParameter - oldInitialParameter);
+              if (orderContinuity > 0)
               {
-                hppDout(info, "Applying velocity constraints...");
+                hppDout(info, "Applying initial velocity constraints...");
                 Configuration_t afterInitial = res[i]->base();
                 integrate(problem().robot(),
                     res[i]->base(),
                     res[i]->parameters().row(1),
                     afterInitial);
                 vector_t initialTangentVector(rDof);
-                initialConstraints->projectOnKernel(initial,
-                    afterInitial,
+                difference(problem().robot(), afterInitial, initial, initialTangentVector);
+                hppDout(info, "v_i " << initialTangentVector);
+                initialConstraints->projectVectorOnKernel(initial,
+                    initialTangentVector,
                     initialTangentVector);
+                hppDout(info, "new v_i " << initialTangentVector);
                 integrate(problem().robot(), initial, initialTangentVector, afterInitial);
                 vector_t afterInitialParameter(rDof);
                 difference(problem().robot(), afterInitial, res[i]->base(), afterInitialParameter);
@@ -692,21 +701,29 @@ namespace hpp {
               //     res[i]->parameters().row(Spline::NbCoeffs-1),
               //     end);
               Configuration_t end = res[i]->end();
+              Configuration_t oldEnd = a[i]->end();
               endConstraints->apply(end);
+              // hppDout(info, "Difference after end projection:\n" << end - oldEnd);
               vector_t endParameter(rDof);
               difference(problem().robot(), end, res[i]->base(), endParameter);
+              vector_t oldEndParameter = parameters.row(Spline::NbCoeffs-1);
               parameters.row(Spline::NbCoeffs-1) = endParameter;
-              if (orderContinuity > 1)
+              // hppDout(info, "Difference after end projection - parameter:\n" << endParameter - oldEndParameter);
+              if (orderContinuity > 0)
               {
+                hppDout(info, "Applying velocity contraints...");
                 Configuration_t beforeEnd = res[i]->base();
                 integrate(problem().robot(),
                     res[i]->base(),
                     res[i]->parameters().row(Spline::NbCoeffs-2),
                     beforeEnd);
                 vector_t endTangentVector(rDof);
-                endConstraints->projectOnKernel(end,
-                    beforeEnd,
+                difference(problem().robot(), beforeEnd, end, endTangentVector);
+                hppDout(info, "v " << endTangentVector);
+                endConstraints->projectVectorOnKernel(end,
+                    endTangentVector,
                     endTangentVector);
+                hppDout(info, "new v " << endTangentVector);
                 integrate(problem().robot(), end, endTangentVector, beforeEnd);
                 vector_t beforeEndParameter(rDof);
                 difference(problem().robot(), beforeEnd, res[i]->base(), beforeEndParameter);
