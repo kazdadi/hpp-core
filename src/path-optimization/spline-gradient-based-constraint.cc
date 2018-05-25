@@ -536,20 +536,30 @@ namespace hpp {
               if (configProj)
               {
                 size_type numberOfConstraints = configProj->numericalConstraints().size();
-                constraint.J.conservativeResize(constraint.J.rows() + 2*numberOfConstraints, Eigen::NoChange);
-                constraint.J.bottomRows(2*numberOfConstraints).setZero();
-                constraint.b.conservativeResize(constraint.b.size() + 2*numberOfConstraints);
-                constraint.b.bottomRows(2*numberOfConstraints).setZero();
+                constraint.J.conservativeResize(constraint.J.rows() + 4*numberOfConstraints, Eigen::NoChange);
+                constraint.J.bottomRows(4*numberOfConstraints).setZero();
+                constraint.b.conservativeResize(constraint.b.size() + 4*numberOfConstraints);
+                constraint.b.bottomRows(4*numberOfConstraints).setZero();
                 vector_t constraintValue;
                 constraintValue.conservativeResize (2*numberOfConstraints);
                 configProj->computeValueAndJacobian(splines[i]->initial(), constraintValue,
                     constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
                       numberOfConstraints, rDof));
-                constraintIndex += numberOfConstraints;
+                constraint.J.block(constraintIndex+numberOfConstraints,
+                    rDof*Spline::NbCoeffs*i + rDof,
+                    numberOfConstraints, rDof)
+                  = constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
+                      numberOfConstraints, rDof);
+                constraintIndex += 2*numberOfConstraints;
                 configProj->computeValueAndJacobian(splines[i]->end(), constraintValue,
                     constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof,
                       numberOfConstraints, rDof));
-                constraintIndex += numberOfConstraints;
+                constraint.J.block(constraintIndex+numberOfConstraints,
+                    rDof*Spline::NbCoeffs*(i+1) - 2*rDof,
+                    numberOfConstraints, rDof)
+                  = constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof,
+                      numberOfConstraints, rDof);
+                constraintIndex += 2*numberOfConstraints;
               }
             }
             bool feasible = constraint.decompose (true);
@@ -734,7 +744,12 @@ namespace hpp {
               }
             }
             if (initialConstraints || endConstraints) {
-              res[i]->parameters(parameters);
+              vector_t rowParameters(rDof*Spline::NbCoeffs);
+              for (size_t i = 0; i < Spline::NbCoeffs; ++i)
+              {
+                rowParameters.segment(rDof*i, rDof) = parameters.row(i);
+              }
+              res[i]->rowParameters(rowParameters);
             }
           }
         }
@@ -752,13 +767,7 @@ namespace hpp {
             res[i]->rowParameters(a[i]->rowParameters());
             res[i]->parameterIntegrate(direction.segment(Spline::NbCoeffs*rDof*i,Spline::NbCoeffs*rDof));
           }
-          hppDout(info, "before\n" << res[0]->parameters());
-          Splines_t tmp;
-          Base::copy(res, tmp);
-          projectOnConstraints(res, direction, tmp, transportedDirection, calculateTransportedDirection);
-          for (std::size_t i = 0; i < a.size(); ++i) {
-            res[i]->rowParameters(tmp[i]->rowParameters());
-          }
+          projectOnConstraints(res, direction, res, transportedDirection, calculateTransportedDirection);
           if (calculateTransportedDirection){
           transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
           }
@@ -776,7 +785,6 @@ namespace hpp {
             gradient = (1 - stepSize/gradient.norm())*gradient;
           }
           manifoldStep(res, gradient, res, gradient, false);
-          hppDout(info, "after\n" << res[0]->parameters());
         }
 
       // ----------- Instanciate -------------------------------------------- //
