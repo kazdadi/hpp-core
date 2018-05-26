@@ -379,7 +379,7 @@ namespace hpp {
               BlockIndex::sort(passive);
               BlockIndex::shrink(passive);
               hppDout (info, "Deactivated dof (thr=" << guessThr
-                  << ") " << Eigen::ColBlockIndices(passive)
+                  << ") " << Eigen::ColBlockIndi()ces(passive)
                   << "J = " << J);
               implicitBI = BlockIndex::difference (implicitBI, passive);
             }
@@ -458,6 +458,15 @@ namespace hpp {
           }
           return true;
         }
+
+      template <int _PB, int _SO>
+        void SplineGradientBasedConstraint<_PB, _SO>::getFullSplines
+        (const vector_t reducedSplines, Splines_t fullSplines, LinearConstraint constraint)
+        {
+          param = constraint.PK * reducedSplines;
+          updateSplines(fullSplines, param);
+        }
+
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getValueJacobianReduced
         (const Splines_t fullSplines, const vector_t reducedSplines,
@@ -466,8 +475,7 @@ namespace hpp {
           const size_type nParameters = fullSplines.size() * Spline::NbCoeffs;
           value.resize(0);
           jacobian.resize(0, reducedSplines.size());
-          // TODO: implement getFullSplines
-          fullSplines = getFullSplines(reducedSplines);
+          getFullSplines(reducedSplines, fullSplines);
           for (std::size_t i = 1; i < fullSplines.size(); ++i)
           {
             Configuration_t initial = fullSplines[i]->initial();
@@ -491,9 +499,10 @@ namespace hpp {
       template <int _PB, int _SO>
         PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
         {
+          size_type alpha = problem().getParameter("SplineGradientBasedConstraint/alpha", size_type(.1));
           size_type maxIterations = problem().getParameter("SplineGradientBasedConstraint/maxIterations", size_type(200));
           value_type gradStepSize = problem().getParameter("SplineGradientBasedConstraint/gradStepSize", value_type(.1));
-          value_type gradientEpsilon = problem().getParameter("SplineGradientBasedConstraint/gradientEpsilon", value_type(.01));
+          value_type stepEpsilon = problem().getParameter("SplineGradientBasedConstraint/stepEpsilon", value_type(.01));
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
           // Remove zero length path
@@ -524,26 +533,33 @@ namespace hpp {
           // 4
           // TODO add weights
           SquaredLength<Spline, 1> cost (splines, rDof, rDof);
-          matrix_t H(Spline::NbCoeffs*rDof*splines.size(), Spline::NbCoeffs*rDof*splines.size());
-          cost.hessian(H, splines);
-          Eigen::SelfAdjointEigenSolver<matrix_t> es(H);
-          hppDout(info, "Cost hessian eigenvectors: \n" << es.eigenvectors());
-          hppDout(info, "Cost hessian eigenvalues: \n" << H*es.eigenvectors());
 
           size_type numberOfIterations = 0;
           constraint.decompose();
           // splines = xStar + PK*reducedSplines
-          vector_t reducedSplines(nParameters*rDof-constraint.rank);
+          size_type reducedDim = nParameters*rDof-constraint.rank;
+          vector_t reducedSplines(reducedDim);
 
           while (true)
           {
             vector_t value;
             matrix_t jacobian;
             getValueJacobianReduced(splines, reducedSplines, value, jacobian, constraint);
-            matrix_t jacobianInverse
+            vector_t step(reducedDim);
+            LinearConstraint jacobianConstraint;
+            jacobianConstraint.J = jacobian;
+            jacobianConstraint.b = -value;
+            jacobianConstraint.decompose();
+            step = jacobianConstraint.xStar;
+            vector_t gradient(reducedDim);
+            step = step - alpha*gradient;
+            // TODO: add value < epsilon condition
+            if (step.norm() < stepEpsilon) break;
+            // TODO: Test for collisions/bounds
+            reducedSplines = reducedSplines + step;
           }
-
-          return this->buildPathVector (splines);
+          getFullSplines(reducedSplines, splines);
+          return this->buildPathVector(splines);
         }
 
       // ----------- Convenience functions ---------------------------------- //
@@ -734,7 +750,7 @@ namespace hpp {
           }
           projectOnConstraints(res, direction, res, transportedDirection, calculateTransportedDirection);
           if (calculateTransportedDirection){
-          transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
+            transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
           }
         }
 
