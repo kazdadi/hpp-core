@@ -459,64 +459,14 @@ namespace hpp {
           return true;
         }
 
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::getFullSplines
-        (const vector_t reducedParams, Splines_t& fullSplines, LinearConstraint constraint) const
-        {
-          vector_t param = constraint.xStar + (constraint.PK*reducedParams);
-          vector_t oldParam(param.size());
-          vector_t newParam(param.size());
-          getParameters(fullSplines, oldParam);
-          updateSplines(fullSplines, param);
-          getParameters(fullSplines, newParam);
-        }
-
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::getValueJacobianReduced
-        (const Splines_t fullSplines, const vector_t reducedParams,
-         vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const
-        {
-          const size_type nParameters = fullSplines.size() * Spline::NbCoeffs;
-          size_type rDof = robot_->numberDof();
-          value.resize(0);
-          jacobian.resize(0, reducedParams.size());
-          for (std::size_t i = 1; i < fullSplines.size(); ++i)
-          {
-            Configuration_t initial = fullSplines[i]->initial();
-            ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
-            if (configProj)
-            {
-              size_type numberOfConstraints = configProj->numericalConstraints().size();
-              jacobian.conservativeResize(jacobian.rows()+numberOfConstraints, Eigen::NoChange);
-              value.conservativeResize(value.size()+numberOfConstraints);
-              value.bottomRows(numberOfConstraints).setZero();
-              matrix_t fullJacobian(numberOfConstraints, nParameters*rDof);
-              configProj->computeValueAndJacobian( initial, value.bottomRows(numberOfConstraints),
-                  fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
-              jacobian.bottomRows(numberOfConstraints) = fullJacobian * constraint.PK;
-            }
-          }
-        }
-
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::addConstraintsValueJacobian
-        (const Splines_t fullSplines, const vector_t reducedParams,
-         vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
-         std::vector<CollisionFunctionPtr_t> collFunctions,
-         std::vector<std::size_t> indices,
-         std::vector<value_type> ratios) const
-        {
-          // TODO
-        }
       // ----------- Optimize ----------------------------------------------- //
 
       template <int _PB, int _SO>
         PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
         {
-          value_type alpha = problem().getParameter("SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter("SplineGradientBasedConstraint/maxIterations", size_type(200));
           value_type gradStepSize = problem().getParameter("SplineGradientBasedConstraint/gradStepSize", value_type(.1));
-          value_type stepEpsilon = problem().getParameter("SplineGradientBasedConstraint/stepEpsilon", value_type(.0001));
+          value_type gradientEpsilon = problem().getParameter("SplineGradientBasedConstraint/gradientEpsilon", value_type(.01));
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
           // Remove zero length path
@@ -547,73 +497,88 @@ namespace hpp {
           // 4
           // TODO add weights
           SquaredLength<Spline, 1> cost (splines, rDof, rDof);
+          matrix_t H(Spline::NbCoeffs*rDof*splines.size(), Spline::NbCoeffs*rDof*splines.size());
+          cost.hessian(H, splines);
+          Eigen::SelfAdjointEigenSolver<matrix_t> es(H);
+          hppDout(info, "Cost hessian eigenvectors: \n" << es.eigenvectors());
+          hppDout(info, "Cost hessian eigenvalues: \n" << H*es.eigenvectors());
 
           size_type numberOfIterations = 0;
-          constraint.decompose();
-          // splines = xStar + PK*reducedParams
-          size_type reducedDim = nParameters*rDof-constraint.rank;
-          vector_t reducedParams(reducedDim);
-          vector_t fullParams(nParameters*rDof);
-          getParameters(splines, fullParams);
-          reducedParams = constraint.PK.transpose() * (fullParams-constraint.xStar);
-
-          Splines_t newSplines;
-          Base::copy(splines, newSplines);
-          std::vector<CollisionFunctionPtr_t> collFunctions;
-          std::vector<std::size_t> indices;
-          std::vector<value_type> ratios;
-
           while (true)
           {
-            if (++numberOfIterations > maxIterations) break;
-            hppDout(info, numberOfIterations);
-            getFullSplines(reducedParams, splines, constraint);
-            vector_t value;
-            matrix_t jacobian;
-            getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
-            addConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
-                collFunctions, indices, ratios);
-            vector_t step(reducedDim);
-            LinearConstraint jacobianConstraint(reducedDim, 0);
-            jacobianConstraint.J = jacobian;
-            jacobianConstraint.b = -value;
-            jacobianConstraint.decompose();
-            step = jacobianConstraint.xStar;
-            vector_t gradient(reducedDim);
-            vector_t fullGradient(nParameters*rDof);
-            cost.jacobian(fullGradient, splines);
-            gradient = constraint.PK.transpose() * fullGradient;
-            gradient = jacobianConstraint.PK*jacobianConstraint.PK.transpose()*gradient;
-            step = step - alpha*gradient;
-            if (step.norm() < stepEpsilon)
-            {
-              // TODO: check constraints/bounds
+            if (numberOfIterations > maxIterations) {
+              hppDout (info, "Exceeded maximum number of iterations");
               break;
             }
-            // TODO: Test for collisions/bounds
-            reducedParams = reducedParams + step;
-            getFullSplines(reducedParams, newSplines, constraint);
-            Reports_t reports = this->validatePath (newSplines, true);
+            // Collision test
+            // If collision, add constraint and go back
+            Reports_t reports = this->validatePath(splines, false);
             bool noCollision = reports.empty();
             if (!noCollision)
             {
-              CollisionFunctionPtr_t cc =
-                CollisionFunction::create(robot_,
-                    splines[reports[0].second],
-                    newSplines[reports[0].second],
-                    reports[0].first);
-              // LiegroupElement result = cc->outputSpace();
-              // vector_t argument(cc->inputSize());
-              // (*(newSplines[reports[0].second])) (argument, reports[0].first->parameter);
-              // cc->value(result, argument);
-              collFunctions.push_back(cc);
-              indices.push_back(reports[0].second);
-              ratios.push_back(reports[0].first->parameter);
-              reducedParams = reducedParams - step;
             }
+
+            // If no collision, optimize
+            value_type costValue;
+            cost.value(costValue, splines);
+            vector_t gradient(Spline::NbCoeffs*rDof*splines.size());
+            cost.jacobian(gradient, splines);
+
+            constraint.J.conservativeResize(numberOfContinuityConstraints, Eigen::NoChange);
+            constraint.b.conservativeResize(numberOfContinuityConstraints, Eigen::NoChange);
+            size_type constraintIndex = 0;
+            for (std::size_t i = 1; i < splines.size(); ++i)
+            {
+              ConstraintSetPtr_t cs = splines[i]->constraints();
+              ConfigProjectorPtr_t configProj;
+              configProj = cs->configProjector();
+
+              if (configProj)
+              {
+                size_type numberOfConstraints = configProj->numericalConstraints().size();
+                constraint.J.conservativeResize(constraint.J.rows() + 4*numberOfConstraints, Eigen::NoChange);
+                constraint.J.bottomRows(4*numberOfConstraints).setZero();
+                constraint.b.conservativeResize(constraint.b.size() + 4*numberOfConstraints);
+                constraint.b.bottomRows(4*numberOfConstraints).setZero();
+                vector_t constraintValue;
+                constraintValue.conservativeResize (2*numberOfConstraints);
+                configProj->computeValueAndJacobian(splines[i]->initial(), constraintValue,
+                    constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
+                      numberOfConstraints, rDof));
+                constraint.J.block(constraintIndex+numberOfConstraints,
+                    rDof*Spline::NbCoeffs*i + rDof,
+                    numberOfConstraints, rDof)
+                  = constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*i,
+                      numberOfConstraints, rDof);
+                constraintIndex += 2*numberOfConstraints;
+                configProj->computeValueAndJacobian(splines[i]->end(), constraintValue,
+                    constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof,
+                      numberOfConstraints, rDof));
+                constraint.J.block(constraintIndex+numberOfConstraints,
+                    rDof*Spline::NbCoeffs*(i+1) - 2*rDof,
+                    numberOfConstraints, rDof)
+                  = constraint.J.block(constraintIndex, rDof*Spline::NbCoeffs*(i+1)-rDof,
+                      numberOfConstraints, rDof);
+                constraintIndex += 2*numberOfConstraints;
+              }
+            }
+            bool feasible = constraint.decompose (true);
+            if (!feasible) {
+              hppDout (info, "Constraints not feasible");
+              break;
+            }
+            gradient = constraint.PK*constraint.PK.transpose()*gradient;
+            hppDout (info, std::setw(4) << ++numberOfIterations
+                << " Cost " << std::setw(10) << costValue
+                << " -- |grad| " << std::setw(10) << gradient.norm()
+                << " -- |J*grad| " << std::setw(12) << (constraint.J*gradient).norm());
+            if (gradient.norm() < gradientEpsilon) break;
+            Splines_t oldSplines;
+            Base::copy(splines, oldSplines);
+            step(splines, -gradStepSize*gradient, (-gradStepSize*gradient).norm(), splines);
           }
-          getFullSplines(reducedParams, splines, constraint);
-          return this->buildPathVector(splines);
+          hppDout (info, "Finished after " << numberOfIterations << " iterations");
+          return this->buildPathVector (splines);
         }
 
       // ----------- Convenience functions ---------------------------------- //
@@ -656,17 +621,6 @@ namespace hpp {
           size_type row = 0, size = robot_->numberDof() * Spline::NbCoeffs;
           for (std::size_t i = 0; i < splines.size(); ++i) {
             splines[i]->rowParameters(param.segment(row, size));
-            row += size;
-          }
-        }
-
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::getParameters
-        (const Splines_t& splines, vector_t& param) const
-        {
-          size_type row = 0, size = robot_->numberDof() * Spline::NbCoeffs;
-          for (std::size_t i = 0; i < splines.size(); ++i) {
-            param.segment(row, size) = splines[i]->rowParameters();
             row += size;
           }
         }
@@ -815,7 +769,7 @@ namespace hpp {
           }
           projectOnConstraints(res, direction, res, transportedDirection, calculateTransportedDirection);
           if (calculateTransportedDirection){
-            transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
+          transportedDirection = (direction.norm()/transportedDirection.norm())*transportedDirection;
           }
         }
 

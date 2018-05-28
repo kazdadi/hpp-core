@@ -112,11 +112,25 @@ namespace hpp {
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
 
+          void getFullSplines (const vector_t reducedParams,
+              Splines_t& fullSplines, LinearConstraint constraint) const;
+ 
+          void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
+         vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
+
+          void SplineGradientBasedConstraint<_PB, _SO>::addConstraintsValueJacobian
+            (const Splines_t fullSplines, const vector_t reducedParams,
+             vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
+             std::vector<CollisionFunctionPtr_t> collFunctions,
+             std::vector<std::size_t> indices,
+             std::vector<value_type> ratios) const;
+
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;
 
-          /// Returns res = (1 - alpha) * a + alpha * b
           void updateSplines (Splines_t& spline, const vector_t& param) const;
+
+          void getParameters (const Splines_t& spline, vector_t& param) const;
 
           /// Returns projection of splines on constraints
           /// If the flag is set, also returns the projection 
