@@ -118,10 +118,11 @@ namespace hpp {
           void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
          vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
 
-          void SplineGradientBasedConstraint<_PB, _SO>::addConstraintsValueJacobian
+          void addConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
              vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
-             std::vector<CollisionFunctionPtr_t> collFunctions,
+             std::vector<DifferentiableFunctionPtr_t> collFunctions,
+             std::vector<value_type> collValues,
              std::vector<std::size_t> indices,
              std::vector<value_type> ratios) const;
 

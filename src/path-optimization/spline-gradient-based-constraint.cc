@@ -502,11 +502,37 @@ namespace hpp {
         void SplineGradientBasedConstraint<_PB, _SO>::addConstraintsValueJacobian
         (const Splines_t fullSplines, const vector_t reducedParams,
          vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
-         std::vector<CollisionFunctionPtr_t> collFunctions,
+         std::vector<DifferentiableFunctionPtr_t> collFunctions,
+         std::vector<value_type> collValues,
          std::vector<std::size_t> indices,
          std::vector<value_type> ratios) const
         {
           // TODO
+          std::size_t row = value.size();
+          value.conservativeResize(row + collFunctions.size());
+          jacobian.conservativeResize(row + collFunctions.size(), Eigen::NoChange);
+          for (std::size_t i = 0; i < collFunctions.size(); ++i)
+          {
+            size_type rDof = robot_->numberDof();
+
+            vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
+            matrix_t splinesJacobian(rDof, fullSplines.size()*Spline::NbCoeffs*rDof);
+            fullSplines[indices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, ratios[i]);
+            splinesJacobian.setZero();
+            for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j)
+            {
+              splinesJacobian.block(0, Spline::NbCoeffs*rDof*indices[i] + rDof*j,
+                  rDof, rDof) = BernsteinCoeffs[j] * matrix_t::Identity(rDof, rDof);
+            }
+
+            vector_t currentConfig(collFunctions[i]->inputSize());
+            matrix_t collJacobian(1, collFunctions[i]->inputSize());
+            (*(fullSplines[indices[i]])) (currentConfig, ratios[i]);
+            value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[row]);
+            collFunctions[i]->jacobian(collJacobian, currentConfig);
+            jacobian.row(row) = collJacobian*splinesJacobian*constraint.PK;
+            ++row;
+          }
         }
       // ----------- Optimize ----------------------------------------------- //
 
@@ -516,7 +542,7 @@ namespace hpp {
           value_type alpha = problem().getParameter("SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter("SplineGradientBasedConstraint/maxIterations", size_type(200));
           value_type gradStepSize = problem().getParameter("SplineGradientBasedConstraint/gradStepSize", value_type(.1));
-          value_type stepEpsilon = problem().getParameter("SplineGradientBasedConstraint/stepEpsilon", value_type(.0001));
+          value_type stepEpsilon = problem().getParameter("SplineGradientBasedConstraint/stepEpsilon", value_type(.001));
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
           // Remove zero length path
@@ -559,7 +585,8 @@ namespace hpp {
 
           Splines_t newSplines;
           Base::copy(splines, newSplines);
-          std::vector<CollisionFunctionPtr_t> collFunctions;
+          std::vector<DifferentiableFunctionPtr_t> collFunctions;
+          std::vector<value_type> collValues;
           std::vector<std::size_t> indices;
           std::vector<value_type> ratios;
 
@@ -572,12 +599,13 @@ namespace hpp {
             matrix_t jacobian;
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
             addConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
-                collFunctions, indices, ratios);
+                collFunctions, collValues, indices, ratios);
             vector_t step(reducedDim);
             LinearConstraint jacobianConstraint(reducedDim, 0);
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
-            jacobianConstraint.decompose();
+            bool feasible = jacobianConstraint.decompose(true);
+            if (!feasible) break;
             step = jacobianConstraint.xStar;
             vector_t gradient(reducedDim);
             vector_t fullGradient(nParameters*rDof);
@@ -585,6 +613,7 @@ namespace hpp {
             gradient = constraint.PK.transpose() * fullGradient;
             gradient = jacobianConstraint.PK*jacobianConstraint.PK.transpose()*gradient;
             step = step - alpha*gradient;
+            hppDout(info, "Step norm: " << step.norm() << " | Constraints dim: " << jacobianConstraint.rank << " / " << reducedDim);
             if (step.norm() < stepEpsilon)
             {
               // TODO: check constraints/bounds
@@ -597,16 +626,15 @@ namespace hpp {
             bool noCollision = reports.empty();
             if (!noCollision)
             {
-              CollisionFunctionPtr_t cc =
+              DifferentiableFunctionPtr_t cc =
                 CollisionFunction::create(robot_,
                     splines[reports[0].second],
                     newSplines[reports[0].second],
                     reports[0].first);
-              // LiegroupElement result = cc->outputSpace();
-              // vector_t argument(cc->inputSize());
-              // (*(newSplines[reports[0].second])) (argument, reports[0].first->parameter);
-              // cc->value(result, argument);
+              vector_t freeConfig(cc->inputSize());
+              (*(splines[reports[0].second])) (freeConfig, reports[0].first->parameter);
               collFunctions.push_back(cc);
+              collValues.push_back((((*cc) (freeConfig)).vector())[0]);
               indices.push_back(reports[0].second);
               ratios.push_back(reports[0].first->parameter);
               reducedParams = reducedParams - step;
