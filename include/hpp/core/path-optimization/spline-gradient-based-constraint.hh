@@ -133,26 +133,6 @@ namespace hpp {
 
           void getParameters (const Splines_t& spline, vector_t& param) const;
 
-          /// Returns projection of splines on constraints
-          /// If the flag is set, also returns the projection 
-          /// of direction on the tangent space at the projected of the projection
-          void projectOnConstraints (const Splines_t& a, const vector_t direction,
-              Splines_t res, vector_t projectedDirection,
-              bool calculatedProjectedDirection) const;
-
-          /// Returns the splines after taking a step in the chosen direction
-          /// If the flag is set, also returns the transported direction vector,
-          /// which has the same norm as the original direction vector
-          void manifoldStep (const Splines_t& a, const vector_t direction,
-              Splines_t res, vector_t transportedDirection,
-              bool calculateTransportedDirection) const;
-
-          /// Returns the splines after taking multiple smaller steps
-          /// of size at most stepSize in the chosen direction
-          void step(const Splines_t& a, vector_t direction, value_type stepSize,Splines_t& res) const;
-
-          void copyParam (const Splines_t& in, Splines_t& out) const;
-
           // Continuity constraints
           // matrix_t Jcontinuity_;
           // vector_t rhsContinuity_;
