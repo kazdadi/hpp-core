@@ -486,7 +486,7 @@ namespace hpp {
             ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
             if (configProj)
             {
-              size_type numberOfConstraints = configProj->numericalConstraints().size();
+              size_type numberOfConstraints = configProj->dimension();
               jacobian.conservativeResize(jacobian.rows()+numberOfConstraints, Eigen::NoChange);
               value.conservativeResize(value.size()+numberOfConstraints);
               value.bottomRows(numberOfConstraints).setZero();
@@ -543,12 +543,12 @@ namespace hpp {
               "SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter(
               "SplineGradientBasedConstraint/maxIterations", size_type(200));
-          value_type gradStepSize = problem().getParameter(
-              "SplineGradientBasedConstraint/gradStepSize", value_type(.1));
           value_type stepEpsilon = problem().getParameter(
               "SplineGradientBasedConstraint/stepEpsilon", value_type(.001));
           bool checkJointBound = problem().getParameter(
-              "SplineGradientBased/checkJointBound", true);
+              "SplineGradientBasedConstraint/checkJointBound", true);
+          bool checkCollisions = problem().getParameter(
+              "SplineGradientBasedConstraint/checkCollisions", true);
 
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
@@ -614,13 +614,12 @@ namespace hpp {
             vector_t value;
             matrix_t jacobian;
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
+            if (checkCollisions)
             addConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
                 collFunctions, collValues, indices, ratios);
 
             vector_t boundsValue;
             matrix_t boundsJacobian;
-            addBoundsValueJacobian(splines, reducedParams, boundsValue, boundsJacobian, constraint,
-                jacobian, activeBoundIndices);
 
             vector_t step(reducedDim);
             LinearConstraint jacobianConstraint(reducedDim, 0);
@@ -629,36 +628,42 @@ namespace hpp {
             bool feasible = jacobianConstraint.decompose(true);
             if (!feasible) break;
 
+            step = jacobianConstraint.xStar;
             // Add constraints to restore active bounds to g(x) = b
-            LinearConstraint activeBounds(reducedDim, 0);
-            activeBounds.J.resize(activeBoundIndices.size(), Eigen::NoChange);
-
-            for (std:size_t i = 0; i < activeBoundIndices.size(); ++i)
-            {
-              activeBounds.J.row(i) = boundConstraintReduced.J.row(activeBoundIndices[i]);
-              activeBounds.b[i] = boundConstraintReduced.b[activeBoundIndices[i]];
-            }
+            // TODO: Restore active bounds to g(x) = b + epsilon?
             LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), 0);
-            jacobianConstraint.reduceConstraint(boundConstraintReduced, activeBoundsProjected);
-            jacobianConstraint.decompose();
+            if (activeBoundIndices.size() > 0){
+              LinearConstraint activeBounds(reducedDim, 0);
+              activeBounds.J.resize(activeBoundIndices.size(), Eigen::NoChange);
 
-            step = jacobianConstraint.xStar + jacobianConstraint.PK * activeBoundsProjected.xStar;
+              for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
+              {
+                activeBounds.J.row(i) = boundConstraintReduced.J.row(activeBoundIndices[i]);
+                activeBounds.b[i] = boundConstraintReduced.b[activeBoundIndices[i]];
+              }
+              jacobianConstraint.reduceConstraint(boundConstraintReduced, activeBoundsProjected);
+              if (!activeBoundsProjected.decompose(true)) break;
+              step = step + jacobianConstraint.PK * activeBoundsProjected.xStar;
+            }
+
             vector_t gradient(reducedDim);
             vector_t fullGradient(nParameters*rDof);
             cost.jacobian(fullGradient, splines);
             gradient = constraint.PK.transpose() * fullGradient;
             // gradient = jacobianConstraint.PK*jacobianConstraint.PK.transpose()*gradient;
             gradient = jacobianConstraint.PK.transpose()*gradient;
-            gradient = activeBoundsProjected.J * gradient;
 
-            activeBoundsProjected.b = gradient;
-            for (std::size_t i = 0; i < activeBoundsProjected.size(); ++i)
+            if (activeBoundIndices.size() > 0)
             {
-              if (activeBoundsProjected.b[i] < 0) activeBoundsProjected.b[i] = 0;
+              activeBoundsProjected.b = activeBoundsProjected.J * gradient;
+              for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
+              {
+                if (activeBoundsProjected.b[i] > 0) activeBoundsProjected.b[i] = 0;
+              }
+              // TODO: Reuse previous decomposition
+              activeBoundsProjected.decompose();
+              gradient = activeBoundsProjected.xStar;
             }
-            // TODO: Reuse previous decomposition
-            activeBoundsProjected.decompose();
-            gradient = activeBoundsProjected.xStar;
 
             gradient = jacobianConstraint.PK*gradient;
             step = step - alpha*gradient;
@@ -670,10 +675,10 @@ namespace hpp {
               break;
             }
             activeBoundIndices.clear();
-            for (std::size_t i = 0; i < boundConstraintReduced.rows(); ++i)
+            for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
             {
               if (boundConstraintReduced.J.row(i) * reducedParams
-                  <= boundConstraintReduced.b[i])
+                  <= boundConstraintReduced.b[i] && checkJointBound)
               {
                 activeBoundIndices.push_back(i);
                 hppDout(info, "Bound " << i << " is active.");
@@ -681,22 +686,25 @@ namespace hpp {
             }
             reducedParams = reducedParams + step;
             getFullSplines(reducedParams, newSplines, constraint);
-            Reports_t reports = this->validatePath (newSplines, true);
-            bool noCollision = reports.empty();
-            if (!noCollision)
+            if (checkCollisions)
             {
-              DifferentiableFunctionPtr_t cc =
-                CollisionFunction::create(robot_,
-                    splines[reports[0].second],
-                    newSplines[reports[0].second],
-                    reports[0].first);
-              vector_t freeConfig(cc->inputSize());
-              (*(splines[reports[0].second])) (freeConfig, reports[0].first->parameter);
-              collFunctions.push_back(cc);
-              collValues.push_back((((*cc) (freeConfig)).vector())[0]);
-              indices.push_back(reports[0].second);
-              ratios.push_back(reports[0].first->parameter);
-              reducedParams = reducedParams - step;
+              Reports_t reports = this->validatePath (newSplines, true);
+              bool noCollision = reports.empty();
+              if (!noCollision)
+              {
+                DifferentiableFunctionPtr_t cc =
+                  CollisionFunction::create(robot_,
+                      splines[reports[0].second],
+                      newSplines[reports[0].second],
+                      reports[0].first);
+                vector_t freeConfig(cc->inputSize());
+                (*(splines[reports[0].second])) (freeConfig, reports[0].first->parameter);
+                collFunctions.push_back(cc);
+                collValues.push_back((((*cc) (freeConfig)).vector())[0]);
+                indices.push_back(reports[0].second);
+                ratios.push_back(reports[0].first->parameter);
+                reducedParams = reducedParams - step;
+              }
             }
           }
           getFullSplines(reducedParams, splines, constraint);
