@@ -499,7 +499,7 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::addConstraintsValueJacobian
+        void SplineGradientBasedConstraint<_PB, _SO>::addCollisionConstraintsValueJacobian
         (const Splines_t fullSplines, const vector_t reducedParams,
          vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
          std::vector<DifferentiableFunctionPtr_t> collFunctions,
@@ -534,6 +534,25 @@ namespace hpp {
             ++row;
           }
         }
+
+      template <int _PB, int _SO>
+        bool SplineGradientBasedConstraint<_PB, _SO>::validateConstraints
+        (const Splines_t fullSplines, const vector_t value,
+         LinearConstraint constraint) const
+        {
+          std::size_t row = 0;
+          for (std::size_t i = 0; i < fullSplines.size(); ++i)
+          {
+            ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
+            if (configProj)
+            {
+              std::size_t numberOfConstraints = configProj->dimension();
+              if (value.segment(row, numberOfConstraints).norm() > configProj->errorThreshold())
+                return false;
+              row += numberOfConstraints;
+            }
+          }
+        }
       // ----------- Optimize ----------------------------------------------- //
 
       template <int _PB, int _SO>
@@ -543,8 +562,8 @@ namespace hpp {
               "SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter(
               "SplineGradientBasedConstraint/maxIterations", size_type(200));
-          value_type stepEpsilon = problem().getParameter(
-              "SplineGradientBasedConstraint/stepEpsilon", value_type(.001));
+          value_type stepThreshold = problem().getParameter(
+              "SplineGradientBasedConstraint/stepThreshold", value_type(.01));
           bool checkJointBound = problem().getParameter(
               "SplineGradientBasedConstraint/checkJointBound", true);
           bool checkCollisions = problem().getParameter(
@@ -576,13 +595,13 @@ namespace hpp {
           this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
           size_type numberOfContinuityConstraints = constraint.J.rows();
 
-          // 4
+          // 3
           // TODO add weights
           SquaredLength<Spline, 1> cost (splines, rDof, rDof);
 
-          size_type numberOfIterations = 0;
-          constraint.decompose();
+          // 4
           // splines = xStar + PK*reducedParams
+          constraint.decompose();
           size_type reducedDim = nParameters*rDof-constraint.rank;
           vector_t reducedParams(reducedDim);
           vector_t fullParams(nParameters*rDof);
@@ -598,14 +617,19 @@ namespace hpp {
           LinearConstraint boundConstraintReduced (constraint.PK.rows(), 0);
           constraint.reduceConstraint(boundConstraint, boundConstraintReduced, false);
 
+          size_type numberOfIterations = 0;
+
           Splines_t newSplines;
           Base::copy(splines, newSplines);
+
           std::vector<DifferentiableFunctionPtr_t> collFunctions;
           std::vector<value_type> collValues;
           std::vector<std::size_t> indices;
           std::vector<value_type> ratios;
+
           std::vector<std::size_t> activeBoundIndices;
 
+          // 5
           while (true)
           {
             if (++numberOfIterations > maxIterations) break;
@@ -615,42 +639,54 @@ namespace hpp {
             matrix_t jacobian;
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
             if (checkCollisions)
-            addConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
+            addCollisionConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
                 collFunctions, collValues, indices, ratios);
 
             vector_t boundsValue;
             matrix_t boundsJacobian;
 
+            // 5.1
+            // Solve first order approximation of h(p + step) = 0
             vector_t step(reducedDim);
             LinearConstraint jacobianConstraint(reducedDim, 0);
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
             bool feasible = jacobianConstraint.decompose(true);
-            if (!feasible) break;
+            if (!feasible) 
+            {
+              hppDout(info, "Not enough degrees of freedom to satisfy equality constraints");
+              break;
+            }
 
             step = jacobianConstraint.xStar;
-            // Add constraints to restore active bounds to g(x) = b
-            // TODO: Restore active bounds to g(x) = b + epsilon?
+
+            // Add constraints to restore active bounds to g(p) = b
+            // TODO: Restore active bounds to g(p) = b + epsilon?
             LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), 0);
             if (activeBoundIndices.size() > 0){
-              LinearConstraint activeBounds(reducedDim, 0);
-              activeBounds.J.resize(activeBoundIndices.size(), Eigen::NoChange);
-
+              LinearConstraint activeBounds(reducedDim, activeBoundIndices.size());
               for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
               {
                 activeBounds.J.row(i) = boundConstraintReduced.J.row(activeBoundIndices[i]);
-                activeBounds.b[i] = boundConstraintReduced.b[activeBoundIndices[i]];
+                activeBounds.b[i] = boundConstraintReduced.b[activeBoundIndices[i]]
+                  - boundConstraintReduced.J.row(activeBoundIndices[i]) * (reducedParams + step);
               }
-              jacobianConstraint.reduceConstraint(boundConstraintReduced, activeBoundsProjected);
-              if (!activeBoundsProjected.decompose(true)) break;
+              jacobianConstraint.reduceConstraint(activeBounds, activeBoundsProjected);
+              if (!activeBoundsProjected.decompose(true))
+              {
+                hppDout(info, "Not enough degrees of freedom to satisfy inequality constraints");
+                break;
+              }
               step = step + jacobianConstraint.PK * activeBoundsProjected.xStar;
+              hppDout(info, (activeBounds.J * step - activeBounds.b).norm());
             }
 
+            // 5.2
+            // Remove gradient components that break the inequality constraints
             vector_t gradient(reducedDim);
             vector_t fullGradient(nParameters*rDof);
             cost.jacobian(fullGradient, splines);
             gradient = constraint.PK.transpose() * fullGradient;
-            // gradient = jacobianConstraint.PK*jacobianConstraint.PK.transpose()*gradient;
             gradient = jacobianConstraint.PK.transpose()*gradient;
 
             if (activeBoundIndices.size() > 0)
@@ -660,36 +696,33 @@ namespace hpp {
               {
                 if (activeBoundsProjected.b[i] > 0) activeBoundsProjected.b[i] = 0;
               }
-              // TODO: Reuse previous decomposition
+              // TODO: Reuse previous decomposition if this becomes a bottleneck
               activeBoundsProjected.decompose();
               gradient = activeBoundsProjected.xStar;
             }
-
+            // Project gradient back to parameter space
             gradient = jacobianConstraint.PK*gradient;
             step = step - alpha*gradient;
-            hppDout(info, "Step norm: " << step.norm() <<
-                " | Constraints dim: " << jacobianConstraint.rank << " / " << reducedDim);
-            if (step.norm() < stepEpsilon)
+            hppDout(info, "Step norm: " << step.norm()
+                << " | Constraints dim: " << jacobianConstraint.rank
+                << " / " << reducedDim);
+            // 5.3
+            // Check if optimum is reached
+            if (step.norm() < stepThreshold)
             {
-              // TODO: Check that constraints are satisfied within thresholds
-              break;
-            }
-            activeBoundIndices.clear();
-            for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
-            {
-              if (boundConstraintReduced.J.row(i) * reducedParams
-                  <= boundConstraintReduced.b[i] && checkJointBound)
-              {
-                activeBoundIndices.push_back(i);
-                hppDout(info, "Bound " << i << " is active.");
-              }
+              if (validateConstraints(splines, value, constraint)) break;
             }
             reducedParams = reducedParams + step;
             getFullSplines(reducedParams, newSplines, constraint);
+
+            bool noCollision = true;
+            // 5.4
+            // If a collision is detected, add collision constraints
+            // and reset path to valid state
             if (checkCollisions)
             {
               Reports_t reports = this->validatePath (newSplines, true);
-              bool noCollision = reports.empty();
+              noCollision = reports.empty();
               if (!noCollision)
               {
                 DifferentiableFunctionPtr_t cc =
@@ -706,7 +739,27 @@ namespace hpp {
                 reducedParams = reducedParams - step;
               }
             }
+
+            // 5.5
+            // If no collisions are detected, check joint bounds
+            // and add active bound constraints
+            if (noCollision)
+            {
+              activeBoundIndices.clear();
+              for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
+              {
+                if (boundConstraintReduced.J.row(i) * reducedParams
+                    <= boundConstraintReduced.b[i] && checkJointBound)
+                {
+                  activeBoundIndices.push_back(i);
+                  hppDout(info, "Bound " << i << " is active: "
+                      << boundConstraintReduced.J.row(i) * reducedParams
+                      << " <= " << boundConstraintReduced.b[i]);
+                }
+              }
+            }
           }
+          // 6
           getFullSplines(reducedParams, splines, constraint);
           return this->buildPathVector(splines);
         }

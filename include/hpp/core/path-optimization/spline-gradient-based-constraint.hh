@@ -53,18 +53,17 @@ namespace hpp {
           static Ptr_t create (const Problem& problem);
 
           /// Optimize path
-          /// 1* - Transform straight paths into splines
-          /// 2* - Add continuity constraints
-          /// 3  - Add problem constraints
-          /// 4* - Make cost function
-          /// 5* - Compute explicit representation of linear constraints.
-          /// 6* :
-          ///    1 - Compute cost hessian
-          ///    2 - Compute optimum
-          ///    3 - Check path for collision. If no collision, return solution
-          ///    4 - add collision constraint
-          ///    5 - re-compute explicit representation of linear constraints.
-          /// 7* - Build result path.
+          /// 1 - Transform straight paths into splines
+          /// 2 - Add continuity constraints
+          /// 3 - Make cost function
+          /// 4 - Compute explicit representation of linear constraints.
+          /// 5 :
+          ///    1 - Solve first order approximation of equality and active bound constraints
+          ///    2 - Project gradient on problem constraints
+          ///    3 - Check if optimum is reached
+          ///    4 - Check for collisions and add constraints if any are detected
+          ///    5 - Check inequality constraints and add them to the active sets if they are violated
+          /// 6 - Build result path.
           virtual PathVectorPtr_t optimize (const PathVectorPtr_t& path);
 
         protected:
@@ -118,13 +117,16 @@ namespace hpp {
           void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
          vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
 
-          void addConstraintsValueJacobian
+          void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
              vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
              std::vector<DifferentiableFunctionPtr_t> collFunctions,
              std::vector<value_type> collValues,
              std::vector<std::size_t> indices,
              std::vector<value_type> ratios) const;
+
+        bool validateConstraints (const Splines_t fullSplines, const vector_t value,
+         LinearConstraint constraint) const;
 
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;
