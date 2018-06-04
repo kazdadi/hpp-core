@@ -464,11 +464,7 @@ namespace hpp {
         (const vector_t reducedParams, Splines_t& fullSplines, LinearConstraint constraint) const
         {
           vector_t param = constraint.xStar + (constraint.PK*reducedParams);
-          vector_t oldParam(param.size());
-          vector_t newParam(param.size());
-          getParameters(fullSplines, oldParam);
           updateSplines(fullSplines, param);
-          getParameters(fullSplines, newParam);
         }
 
       template <int _PB, int _SO>
@@ -526,7 +522,7 @@ namespace hpp {
             }
 
             vector_t currentConfig(collFunctions[i]->inputSize());
-            matrix_t collJacobian(1, collFunctions[i]->inputSize());
+            matrix_t collJacobian(1, collFunctions[i]->inputDerivativeSize());
             (*(fullSplines[indices[i]])) (currentConfig, ratios[i]);
             value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[row]);
             collFunctions[i]->jacobian(collJacobian, currentConfig);
@@ -541,7 +537,7 @@ namespace hpp {
          LinearConstraint constraint) const
         {
           std::size_t row = 0;
-          for (std::size_t i = 0; i < fullSplines.size(); ++i)
+          for (std::size_t i = 1; i < fullSplines.size(); ++i)
           {
             ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
             if (configProj)
@@ -552,6 +548,7 @@ namespace hpp {
               row += numberOfConstraints;
             }
           }
+          return true;
         }
       // ----------- Optimize ----------------------------------------------- //
 
@@ -614,6 +611,10 @@ namespace hpp {
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
           }
+          if (checkCollisions) {
+            if (!(this->validatePath(splines, true)).empty())
+              throw std::invalid_argument("Input path contains a collision");
+          }
           LinearConstraint boundConstraintReduced (constraint.PK.rows(), 0);
           constraint.reduceConstraint(boundConstraint, boundConstraintReduced, false);
 
@@ -621,6 +622,11 @@ namespace hpp {
 
           Splines_t newSplines;
           Base::copy(splines, newSplines);
+          Splines_t collisionFreeSplines;
+          Base::copy(splines, collisionFreeSplines);
+          vector_t collisionFreeParams = reducedParams;
+          size_type countToCollisionCheck = 1;
+          value_type stepScale = 0;
 
           std::vector<DifferentiableFunctionPtr_t> collFunctions;
           std::vector<value_type> collValues;
@@ -637,6 +643,7 @@ namespace hpp {
             getFullSplines(reducedParams, splines, constraint);
             vector_t value;
             matrix_t jacobian;
+            hppDout(info, reducedParams.transpose());
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
             if (checkCollisions)
             addCollisionConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
@@ -652,6 +659,7 @@ namespace hpp {
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
             bool feasible = jacobianConstraint.decompose(true);
+            hppDout(info, "\n" << jacobianConstraint.b.transpose());
             if (!feasible) 
             {
               hppDout(info, "Not enough degrees of freedom to satisfy equality constraints");
@@ -703,64 +711,73 @@ namespace hpp {
             // Project gradient back to parameter space
             gradient = jacobianConstraint.PK*gradient;
             step = step - alpha*gradient;
+            if (stepScale == 0) stepScale = step.norm();
             hppDout(info, "Step norm: " << step.norm()
                 << " | Constraints dim: " << jacobianConstraint.rank
                 << " / " << reducedDim);
             // 5.3
             // Check if optimum is reached
-            if (step.norm() < stepThreshold)
-            {
-              if (validateConstraints(splines, value, constraint)) break;
-            }
-            reducedParams = reducedParams + step;
-            getFullSplines(reducedParams, newSplines, constraint);
+            bool optimumReached = (step.norm() < stepThreshold && validateConstraints(splines, value, constraint))
+              || (numberOfIterations == maxIterations);
 
             bool noCollision = true;
             // 5.4
             // If a collision is detected, add collision constraints
             // and reset path to valid state
-            if (checkCollisions)
+            if (checkCollisions && (--countToCollisionCheck <= 0 || optimumReached))
             {
-              Reports_t reports = this->validatePath (newSplines, true);
+              countToCollisionCheck = (int) (stepScale/step.norm());
+              hppDout(info, "Checking for collision at iteration " << numberOfIterations);
+              hppDout(info, "Next collision check after " << countToCollisionCheck);
+              Reports_t reports = this->validatePath (splines, true);
               noCollision = reports.empty();
-              if (!noCollision)
+              if (noCollision)
               {
+                collisionFreeParams = reducedParams;
+                hppDout(info, "Collision free path at iteration " << numberOfIterations);
+              }
+              else
+              {
+                hppDout(info, "Collision detected");
+                getFullSplines(collisionFreeParams, collisionFreeSplines, constraint);
                 DifferentiableFunctionPtr_t cc =
                   CollisionFunction::create(robot_,
+                      collisionFreeSplines[reports[0].second],
                       splines[reports[0].second],
-                      newSplines[reports[0].second],
                       reports[0].first);
                 vector_t freeConfig(cc->inputSize());
-                (*(splines[reports[0].second])) (freeConfig, reports[0].first->parameter);
+                (*(collisionFreeSplines[reports[0].second])) (freeConfig, reports[0].first->parameter);
                 collFunctions.push_back(cc);
                 collValues.push_back((((*cc) (freeConfig)).vector())[0]);
                 indices.push_back(reports[0].second);
                 ratios.push_back(reports[0].first->parameter);
-                reducedParams = reducedParams - step;
+                countToCollisionCheck = 1;
               }
+            }
+            if (noCollision && optimumReached) break;
+            if (noCollision) reducedParams = reducedParams + step;
+            else{
+              reducedParams = collisionFreeParams;
             }
 
             // 5.5
             // If no collisions are detected, check joint bounds
             // and add active bound constraints
-            if (noCollision)
+            activeBoundIndices.clear();
+            for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
             {
-              activeBoundIndices.clear();
-              for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
+              if (boundConstraintReduced.J.row(i) * reducedParams
+                  <= boundConstraintReduced.b[i] && checkJointBound)
               {
-                if (boundConstraintReduced.J.row(i) * reducedParams
-                    <= boundConstraintReduced.b[i] && checkJointBound)
-                {
-                  activeBoundIndices.push_back(i);
-                  hppDout(info, "Bound " << i << " is active: "
-                      << boundConstraintReduced.J.row(i) * reducedParams
-                      << " <= " << boundConstraintReduced.b[i]);
-                }
+                activeBoundIndices.push_back(i);
+                hppDout(info, "Bound " << i << " is active: "
+                    << boundConstraintReduced.J.row(i) * reducedParams
+                    << " <= " << boundConstraintReduced.b[i]);
               }
             }
           }
           // 6
-          getFullSplines(reducedParams, splines, constraint);
+          // getFullSplines(reducedParams, splines, constraint);
           return this->buildPathVector(splines);
         }
 
