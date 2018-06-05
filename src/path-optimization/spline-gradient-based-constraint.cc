@@ -44,7 +44,7 @@ namespace hpp {
 
       HPP_DEFINE_TIMECOUNTER(SGB_constraintDecomposition);
       HPP_DEFINE_TIMECOUNTER(SGB_qpDecomposition);
-      HPP_DEFINE_TIMECOUNTER(SGB_findNewConstraint);
+      // HPP_DEFINE_TIMECOUNTER(SGB_findNewConstraint);
       HPP_DEFINE_TIMECOUNTER(SGB_qpSolve);
 
       template <int NbRows>
@@ -430,7 +430,7 @@ namespace hpp {
          const SplinePtr_t& spline,
          const SplineOptimizationData& sod) const
         {
-          HPP_SCOPE_TIMECOUNTER(SGB_findNewConstraint);
+          // HPP_SCOPE_TIMECOUNTER(SGB_findNewConstraint);
           bool solved = false;
           Configuration_t q (robot_->configSize());
           CollisionFunctionPtr_t function = functions.functions[iF];
@@ -524,7 +524,8 @@ namespace hpp {
             vector_t currentConfig(collFunctions[i]->inputSize());
             matrix_t collJacobian(1, collFunctions[i]->inputDerivativeSize());
             (*(fullSplines[indices[i]])) (currentConfig, ratios[i]);
-            value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[row]);
+            value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[i]);
+            hppDout(info, value[row]);
             collFunctions[i]->jacobian(collJacobian, currentConfig);
             jacobian.row(row) = collJacobian*splinesJacobian*constraint.PK;
             ++row;
@@ -590,7 +591,6 @@ namespace hpp {
           LinearConstraint constraint (nParameters * rDof, 0);
           SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
           this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
-          size_type numberOfContinuityConstraints = constraint.J.rows();
 
           // 3
           // TODO add weights
@@ -617,6 +617,7 @@ namespace hpp {
           }
           LinearConstraint boundConstraintReduced (constraint.PK.rows(), 0);
           constraint.reduceConstraint(boundConstraint, boundConstraintReduced, false);
+          std::vector<std::size_t> activeBoundIndices;
 
           size_type numberOfIterations = 0;
 
@@ -625,32 +626,30 @@ namespace hpp {
           Splines_t collisionFreeSplines;
           Base::copy(splines, collisionFreeSplines);
           vector_t collisionFreeParams = reducedParams;
-          size_type countToCollisionCheck = 1;
           value_type stepScale = 0;
+          value_type lengthSinceLastCheck = 0;
+          std::size_t nCollisionChecks = 0;
 
           std::vector<DifferentiableFunctionPtr_t> collFunctions;
           std::vector<value_type> collValues;
           std::vector<std::size_t> indices;
           std::vector<value_type> ratios;
-
-          std::vector<std::size_t> activeBoundIndices;
-
+          value_type errorUpperThreshold = 0;
           // 5
           while (true)
           {
             if (++numberOfIterations > maxIterations) break;
             hppDout(info, numberOfIterations);
+            hppDout(info, reducedParams.transpose());
             getFullSplines(reducedParams, splines, constraint);
             vector_t value;
             matrix_t jacobian;
-            hppDout(info, reducedParams.transpose());
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
+            hppDout(info, "Equality constraints error: " << value.norm());
             if (checkCollisions)
             addCollisionConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
                 collFunctions, collValues, indices, ratios);
-
-            vector_t boundsValue;
-            matrix_t boundsJacobian;
+            hppDout(info, "Equality constraints with collisions - error: " << value.norm());
 
             // 5.1
             // Solve first order approximation of h(p + step) = 0
@@ -659,7 +658,6 @@ namespace hpp {
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
             bool feasible = jacobianConstraint.decompose(true);
-            hppDout(info, "\n" << jacobianConstraint.b.transpose());
             if (!feasible) 
             {
               hppDout(info, "Not enough degrees of freedom to satisfy equality constraints");
@@ -667,68 +665,82 @@ namespace hpp {
             }
 
             step = jacobianConstraint.xStar;
+            if (errorUpperThreshold == 0) errorUpperThreshold = 500*step.norm();
+            hppDout(info, "Correction term: " << step.norm());
 
-            // Add constraints to restore active bounds to g(p) = b
-            // TODO: Restore active bounds to g(p) = b + epsilon?
-            LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), 0);
-            if (activeBoundIndices.size() > 0){
-              LinearConstraint activeBounds(reducedDim, activeBoundIndices.size());
-              for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
-              {
-                activeBounds.J.row(i) = boundConstraintReduced.J.row(activeBoundIndices[i]);
-                activeBounds.b[i] = boundConstraintReduced.b[activeBoundIndices[i]]
-                  - boundConstraintReduced.J.row(activeBoundIndices[i]) * (reducedParams + step);
-              }
-              jacobianConstraint.reduceConstraint(activeBounds, activeBoundsProjected);
-              if (!activeBoundsProjected.decompose(true))
-              {
-                hppDout(info, "Not enough degrees of freedom to satisfy inequality constraints");
-                break;
-              }
-              step = step + jacobianConstraint.PK * activeBoundsProjected.xStar;
-              hppDout(info, (activeBounds.J * step - activeBounds.b).norm());
-            }
-
-            // 5.2
-            // Remove gradient components that break the inequality constraints
-            vector_t gradient(reducedDim);
-            vector_t fullGradient(nParameters*rDof);
-            cost.jacobian(fullGradient, splines);
-            gradient = constraint.PK.transpose() * fullGradient;
-            gradient = jacobianConstraint.PK.transpose()*gradient;
-
-            if (activeBoundIndices.size() > 0)
+            bool optimumReached = false;
+            if (step.norm() < errorUpperThreshold)
             {
-              activeBoundsProjected.b = activeBoundsProjected.J * gradient;
+              // 5.2
+              // Remove gradient components that break the inequality constraints
+              vector_t gradient(reducedDim);
+              vector_t fullGradient(nParameters*rDof);
+              cost.jacobian(fullGradient, splines);
+              gradient = constraint.PK.transpose() * fullGradient;
+              gradient = jacobianConstraint.PK.transpose()*gradient;
+              gradient = -alpha*gradient;
+              hppDout(info, "Gradient before inequality " << gradient.norm());
+
+              LinearConstraint projectedBounds(jacobianConstraint.PK.cols(), 0);
+              jacobianConstraint.reduceConstraint(boundConstraintReduced, projectedBounds);
+              if (checkJointBound)
+              {
+                activeBoundIndices.clear();
+                for (std::size_t i = 0; i < projectedBounds.J.rows(); ++i)
+                {
+                  if (projectedBounds.J.row(i)*gradient <= projectedBounds.b[i] - boundConstraintReduced.J.row(i)*reducedParams)
+                  {
+                    activeBoundIndices.push_back(i);
+                    hppDout(info, "Bound " << i << " is active: "
+                        << projectedBounds.J.row(i)*gradient - projectedBounds.b[i]
+                        + boundConstraintReduced.J.row(i)*reducedParams);
+                  }
+                }
+                hppDout(info, activeBoundIndices.size() << " active bounds");
+                if (activeBoundIndices.size() > 0)
+                {
+                  LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), activeBoundIndices.size());
+                  for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
+                  {
+                    activeBoundsProjected.J.row(i) = projectedBounds.J.row(activeBoundIndices[i]);
+                    activeBoundsProjected.b[i] = projectedBounds.b[activeBoundIndices[i]] - boundConstraintReduced.J.row(activeBoundIndices[i])*reducedParams;
+                  }
+                  activeBoundsProjected.decompose();
+                  gradient = activeBoundsProjected.xStar + activeBoundsProjected.PK*(activeBoundsProjected.PK.transpose()*gradient);
+                }
+              }
+              hppDout(info, "Gradient after inequality " << gradient.norm());
+
+              // Project gradient back to parameter space
+              gradient = jacobianConstraint.PK*gradient;
               for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
               {
-                if (activeBoundsProjected.b[i] > 0) activeBoundsProjected.b[i] = 0;
+                hppDout(info, (boundConstraintReduced.J*(reducedParams + step + gradient) - boundConstraintReduced.b)[activeBoundIndices[i]]);
               }
-              // TODO: Reuse previous decomposition if this becomes a bottleneck
-              activeBoundsProjected.decompose();
-              gradient = activeBoundsProjected.xStar;
+              step = step + gradient;
+              // 5.3
+              // Check if optimum is reached
+              optimumReached = (step.norm() < stepThreshold && validateConstraints(splines, value, constraint))
+                || (numberOfIterations == maxIterations);
             }
-            // Project gradient back to parameter space
-            gradient = jacobianConstraint.PK*gradient;
-            step = step - alpha*gradient;
             if (stepScale == 0) stepScale = step.norm();
+            hppDout(info, lengthSinceLastCheck << " / " << stepScale);
             hppDout(info, "Step norm: " << step.norm()
                 << " | Constraints dim: " << jacobianConstraint.rank
                 << " / " << reducedDim);
-            // 5.3
-            // Check if optimum is reached
-            bool optimumReached = (step.norm() < stepThreshold && validateConstraints(splines, value, constraint))
-              || (numberOfIterations == maxIterations);
+            value_type costValue;
+            cost.value(costValue, splines);
+            hppDout(info, "Cost: " << costValue);
 
             bool noCollision = true;
             // 5.4
             // If a collision is detected, add collision constraints
             // and reset path to valid state
-            if (checkCollisions && (--countToCollisionCheck <= 0 || optimumReached))
+            if (checkCollisions && (lengthSinceLastCheck >= stepScale || optimumReached))
             {
-              countToCollisionCheck = (int) (stepScale/step.norm());
+              lengthSinceLastCheck = 0;
               hppDout(info, "Checking for collision at iteration " << numberOfIterations);
-              hppDout(info, "Next collision check after " << countToCollisionCheck);
+              hppDout(info, ++nCollisionChecks << " collision checks so far");
               Reports_t reports = this->validatePath (splines, true);
               noCollision = reports.empty();
               if (noCollision)
@@ -751,30 +763,14 @@ namespace hpp {
                 collValues.push_back((((*cc) (freeConfig)).vector())[0]);
                 indices.push_back(reports[0].second);
                 ratios.push_back(reports[0].first->parameter);
-                countToCollisionCheck = 1;
               }
             }
             if (noCollision && optimumReached) break;
-            if (noCollision) reducedParams = reducedParams + step;
-            else{
-              reducedParams = collisionFreeParams;
+            if (noCollision) {
+              reducedParams = reducedParams + step;
+              lengthSinceLastCheck += step.norm();
             }
-
-            // 5.5
-            // If no collisions are detected, check joint bounds
-            // and add active bound constraints
-            activeBoundIndices.clear();
-            for (std::size_t i = 0; i < boundConstraintReduced.J.rows(); ++i)
-            {
-              if (boundConstraintReduced.J.row(i) * reducedParams
-                  <= boundConstraintReduced.b[i] && checkJointBound)
-              {
-                activeBoundIndices.push_back(i);
-                hppDout(info, "Bound " << i << " is active: "
-                    << boundConstraintReduced.J.row(i) * reducedParams
-                    << " <= " << boundConstraintReduced.b[i]);
-              }
-            }
+            else reducedParams = collisionFreeParams;
           }
           // 6
           // getFullSplines(reducedParams, splines, constraint);
