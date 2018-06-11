@@ -14,6 +14,8 @@
 // received a copy of the GNU Lesser General Public License along with
 // hpp-core. If not, see <http://www.gnu.org/licenses/>.
 
+#define HPP_DEBUG 1
+
 #include <hpp/core/path-optimization/spline-gradient-based-constraint.hh>
 
 #include <hpp/util/exception-factory.hh>
@@ -460,6 +462,35 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
+        void SplineGradientBasedConstraint<_PB, _SO>::interrupt()
+        {
+          interrupt_ = true;
+        }
+
+      template <int _PB, int _SO>
+        value_type SplineGradientBasedConstraint<_PB, _SO>::backtrackingLineSearch
+        (SquaredLength<Spline, 1> cost, Splines_t& splines, LinearConstraint constraint,
+         const vector_t x, vector_t direction, value_type derivative,
+         value_type initialStep, value_type factor, value_type threshold) const
+        {
+          direction = direction/direction.norm();
+          value_type step = initialStep/factor;
+          value_type f_x;
+          value_type f_step;
+          getFullSplines(x, splines, constraint);
+          cost.value(f_x, splines);
+          do {
+            step *= factor;
+            vector_t x_new = x + step*direction;
+            getFullSplines(x_new, splines, constraint);
+            cost.value(f_step, splines);
+          }
+          while (f_x - f_step < threshold * step * derivative);
+          getFullSplines(x, splines, constraint);
+          return step;
+        }
+
+      template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getFullSplines
         (const vector_t reducedParams, Splines_t& fullSplines, LinearConstraint constraint) const
         {
@@ -487,6 +518,7 @@ namespace hpp {
               value.conservativeResize(value.size()+numberOfConstraints);
               value.bottomRows(numberOfConstraints).setZero();
               matrix_t fullJacobian(numberOfConstraints, nParameters*rDof);
+              fullJacobian.setZero();
               configProj->computeValueAndJacobian( initial, value.bottomRows(numberOfConstraints),
                   fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
               jacobian.bottomRows(numberOfConstraints) = fullJacobian * constraint.PK;
@@ -525,7 +557,6 @@ namespace hpp {
             matrix_t collJacobian(1, collFunctions[i]->inputDerivativeSize());
             (*(fullSplines[indices[i]])) (currentConfig, ratios[i]);
             value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[i]);
-            hppDout(info, value[row]);
             collFunctions[i]->jacobian(collJacobian, currentConfig);
             jacobian.row(row) = collJacobian*splinesJacobian*constraint.PK;
             ++row;
@@ -560,6 +591,8 @@ namespace hpp {
               "SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter(
               "SplineGradientBasedConstraint/maxIterations", size_type(200));
+          value_type maxStep = problem().getParameter(
+              "SplineGradientBasedConstraint/maxStep", value_type(1));
           value_type stepThreshold = problem().getParameter(
               "SplineGradientBasedConstraint/stepThreshold", value_type(.01));
           bool checkJointBound = problem().getParameter(
@@ -636,25 +669,24 @@ namespace hpp {
           std::vector<value_type> ratios;
           value_type errorUpperThreshold = 0;
           // 5
-          while (true)
+          interrupt_ = false;
+          while (!interrupt_)
           {
             if (++numberOfIterations > maxIterations) break;
             hppDout(info, numberOfIterations);
-            hppDout(info, reducedParams.transpose());
             getFullSplines(reducedParams, splines, constraint);
             vector_t value;
+            hppDout(info, "Constraints error: " << value.norm());
             matrix_t jacobian;
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
-            hppDout(info, "Equality constraints error: " << value.norm());
             if (checkCollisions)
             addCollisionConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
                 collFunctions, collValues, indices, ratios);
-            hppDout(info, "Equality constraints with collisions - error: " << value.norm());
 
             // 5.1
             // Solve first order approximation of h(p + step) = 0
             vector_t step(reducedDim);
-            LinearConstraint jacobianConstraint(reducedDim, 0);
+            LinearConstraint jacobianConstraint(reducedDim, value.size());
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
             bool feasible = jacobianConstraint.decompose(true);
@@ -666,7 +698,6 @@ namespace hpp {
 
             step = jacobianConstraint.xStar;
             if (errorUpperThreshold == 0) errorUpperThreshold = 500*step.norm();
-            hppDout(info, "Correction term: " << step.norm());
 
             bool optimumReached = false;
             if (step.norm() < errorUpperThreshold)
@@ -677,9 +708,13 @@ namespace hpp {
               vector_t fullGradient(nParameters*rDof);
               cost.jacobian(fullGradient, splines);
               gradient = constraint.PK.transpose() * fullGradient;
+
+              alpha = backtrackingLineSearch(cost, splines, constraint,
+                  reducedParams, -gradient, gradient.norm(), maxStep);
+              hppDout(info, alpha);
+              gradient = - alpha * gradient/gradient.norm();
+
               gradient = jacobianConstraint.PK.transpose()*gradient;
-              gradient = -alpha*gradient;
-              hppDout(info, "Gradient before inequality " << gradient.norm());
 
               LinearConstraint projectedBounds(jacobianConstraint.PK.cols(), 0);
               jacobianConstraint.reduceConstraint(boundConstraintReduced, projectedBounds);
@@ -696,7 +731,6 @@ namespace hpp {
                         + boundConstraintReduced.J.row(i)*reducedParams);
                   }
                 }
-                hppDout(info, activeBoundIndices.size() << " active bounds");
                 if (activeBoundIndices.size() > 0)
                 {
                   LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), activeBoundIndices.size());
@@ -709,7 +743,6 @@ namespace hpp {
                   gradient = activeBoundsProjected.xStar + activeBoundsProjected.PK*(activeBoundsProjected.PK.transpose()*gradient);
                 }
               }
-              hppDout(info, "Gradient after inequality " << gradient.norm());
 
               // Project gradient back to parameter space
               gradient = jacobianConstraint.PK*gradient;

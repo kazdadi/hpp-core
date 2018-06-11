@@ -25,6 +25,7 @@
 #include <hpp/core/path-optimization/spline-gradient-based-abstract.hh>
 #include <hpp/core/path-vector.hh>
 #include <hpp/core/path/spline.hh>
+#include <path-optimization/spline-gradient-based/cost.hh>
 
 #include <hpp/core/steering-method/spline.hh>
 
@@ -110,6 +111,14 @@ namespace hpp {
               const SplinePtr_t& spline, const SplineOptimizationData& sod) const;
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
+
+          bool interrupt_;
+          void interrupt();
+
+          value_type backtrackingLineSearch
+            (SquaredLength<Spline, 1> cost, Splines_t& splines, LinearConstraint constraint,
+             const vector_t x, vector_t direction, value_type derivative,
+             value_type initialStep, value_type factor=.8, value_type threshold=.5) const;
 
           void getFullSplines (const vector_t reducedParams,
               Splines_t& fullSplines, LinearConstraint constraint) const;
