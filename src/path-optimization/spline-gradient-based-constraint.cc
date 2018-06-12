@@ -499,6 +499,66 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
+        value_type SplineGradientBasedConstraint<_PB, _SO>::solveSubSubProblem
+        (vector_t c, vector_t k, value_type r, value_type error) const
+        {
+          // Upper bound : ||c||/r
+          // Lower bound : sum (c_i^2)^.5 / r; i s.t k_i > 0
+          value_type u = 0;
+          for (std::size_t i = 0; i < k.size(); ++i)
+          {
+            if (k[i] > 0) u += std::pow(c[i], 2);
+          }
+          u = std::sqrt(u)/r;
+          if (u == 0) return 0;
+          value_type diff;
+          value_type derivative;
+          do
+          {
+            derivative = 0;
+            diff = -std::pow(r, 2);
+            for (std::size_t i = 0; i < k.size(); ++i)
+            {
+              diff += std::pow(c[i]/(k[i] + u), 2);
+              derivative += -2 * std::pow(c[i], 2)/std::pow(k[i] + u, 3);
+            }
+            if (diff < 0) u /= 2;
+            else u = u - diff/derivative;
+          }
+          while (std::abs(diff) > error);
+          return u;
+        }
+
+      template <int _PB, int _SO>
+        vector_t SplineGradientBasedConstraint<_PB, _SO>::solveQP
+        (matrix_t A, vector_t b, value_type r) const
+        {
+          vector_t x(b.size());
+          Eigen::SelfAdjointEigenSolver<matrix_t> eigenSolver(A);
+          matrix_t V = eigenSolver.eigenvectors();
+          vector_t d = eigenSolver.eigenvalues();
+          if (d[0] > 0)
+          {
+            x = V * (d.cwiseInverse().asDiagonal() * (V.transpose() * b));
+            if (x.norm() <= r) return x;
+          }
+          // c is the decomposition of b in the basis of eigenvectors of A
+          vector_t c(b.size());
+          c = V.transpose() * b;
+
+          vector_t k(b.size());
+          vector_t ones(b.size());
+          ones.setOnes();
+          k = d - d[0] * ones;
+
+          // Solve sum_1^n [c_i/(u + k_i)]^2 = r^2, u > 0
+          value_type u = solveSubSubProblem(c, k, r);
+
+          x = V * ((d + u*ones).cwiseInverse().asDiagonal() * (V.transpose() * b));
+          return x;
+        }
+
+      template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getHessianFiniteDiff
         (const Splines_t fullSplines, const vector_t reducedParams,
          std::vector<matrix_t> hessianStack, value_type stepSize,
@@ -655,6 +715,10 @@ namespace hpp {
               "SplineGradientBasedConstraint/maxStep", value_type(1));
           value_type stepThreshold = problem().getParameter(
               "SplineGradientBasedConstraint/stepThreshold", value_type(.01));
+          value_type trustRadius = problem().getParameter(
+              "SplineGradientBasedConstraint/trustRadius", value_type(.5));
+          value_type stepSize = problem().getParameter(
+              "SplineGradientBasedConstraint/stepSize", value_type(.0001));
           bool checkJointBound = problem().getParameter(
               "SplineGradientBasedConstraint/checkJointBound", true);
           bool checkCollisions = problem().getParameter(
@@ -719,7 +783,6 @@ namespace hpp {
           Splines_t collisionFreeSplines;
           Base::copy(splines, collisionFreeSplines);
           vector_t collisionFreeParams = reducedParams;
-          value_type stepScale = 0;
           value_type lengthSinceLastCheck = 0;
           std::size_t nCollisionChecks = 0;
 
@@ -744,7 +807,7 @@ namespace hpp {
             matrix_t zeroMatrix(nParameters*rDof, nParameters*rDof);
             zeroMatrix.setZero();
             std::vector<matrix_t> hessianStack(nbConstraints, zeroMatrix);
-            getHessianFiniteDiff(splines, reducedParams, hessianStack, 0.01, constraint);
+            getHessianFiniteDiff(splines, reducedParams, hessianStack, stepSize, constraint);
 
             matrix_t fullUnconstrainedHessian(nParameters*rDof, nParameters*rDof);
             cost.hessian(fullUnconstrainedHessian, splines);
@@ -778,8 +841,6 @@ namespace hpp {
             matrix_t hessian(reducedDim, reducedDim);
             matrix_t PK;
             PK = constraint.PK * jacobianConstraint.PK;
-            hppDout(info, nParameters * rDof);
-            hppDout(info, PK.rows() << " " << PK.cols());
             hessian = PK.transpose() * fullHessian * PK;
 
             hppDout(info, "Constraints error: " << value.norm());
@@ -788,18 +849,16 @@ namespace hpp {
                 collFunctions, collValues, indices, ratios);
 
             // 5.1
-            // Solve first order approximation of h(p + step) = 0
-            vector_t step(reducedDim);
+            // Solve first order approximation of h(p + correction) = 0
+            vector_t correction(reducedDim);
 
-            step = jacobianConstraint.xStar;
-            if (errorUpperThreshold == 0) errorUpperThreshold = 500*step.norm();
+            correction = jacobianConstraint.xStar;
+            if (errorUpperThreshold == 0) errorUpperThreshold = 500*correction.norm();
 
             bool optimumReached = false;
-            if (step.norm() < errorUpperThreshold)
-            {
-              // 5.2
-              // Remove gradient components that break the inequality constraints
-              vector_t gradient(reducedDim);
+            vector_t step(reducedDim);
+            if (correction.norm() < errorUpperThreshold)
+            { vector_t gradient(reducedDim);
               gradient = constraint.PK.transpose() * fullGradient;
 
               alpha = backtrackingLineSearch(cost, splines, constraint,
@@ -813,6 +872,8 @@ namespace hpp {
               jacobianConstraint.reduceConstraint(boundConstraintReduced, projectedBounds);
               if (checkJointBound)
               {
+                // 5.2
+                // Remove gradient components that break the inequality constraints
                 activeBoundIndices.clear();
                 for (std::size_t i = 0; i < projectedBounds.J.rows(); ++i)
                 {
@@ -841,19 +902,29 @@ namespace hpp {
               gradient = jacobianConstraint.PK*gradient;
               for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
               {
-                hppDout(info, (boundConstraintReduced.J*(reducedParams + step + gradient) - boundConstraintReduced.b)[activeBoundIndices[i]]);
+                hppDout(info, (boundConstraintReduced.J*(reducedParams + correction + gradient) - boundConstraintReduced.b)[activeBoundIndices[i]]);
               }
-              step = step + gradient;
+
+              step = correction + gradient;
+
+              // TODO: Solve min 1/2 d^T H d - b^T d s.t ||d|| <= r
+              vector_t s = solveQP(hessian, -PK.transpose()*fullGradient, trustRadius);
+              step = correction + jacobianConstraint.PK * s;
+              hppDout(info, correction.norm() << " " << (jacobianConstraint.PK*s).norm() << " " << step.norm());
+
               // 5.3
               // Check if optimum is reached
               optimumReached = (step.norm() < stepThreshold && validateConstraints(splines, value, constraint))
                 || (numberOfIterations == maxIterations);
+              hppDout(info, (step.norm() < stepThreshold) << validateConstraints(splines, value, constraint));
             }
-            if (stepScale == 0) stepScale = step.norm();
-            hppDout(info, lengthSinceLastCheck << " / " << stepScale);
-            hppDout(info, "Step norm: " << step.norm()
-                << " | Constraints dim: " << jacobianConstraint.rank
-                << " / " << reducedDim);
+            if (trustRadius == 0) {
+              trustRadius = step.norm();
+            }
+            // hppDout(info, lengthSinceLastCheck << " / " << trustRadius);
+            // hppDout(info, "Step norm: " << step.norm()
+            //     << " | Constraints dim: " << jacobianConstraint.rank
+            //     << " / " << reducedDim);
             value_type costValue;
             cost.value(costValue, splines);
             hppDout(info, "Cost: " << costValue);
@@ -862,7 +933,7 @@ namespace hpp {
             // 5.4
             // If a collision is detected, add collision constraints
             // and reset path to valid state
-            if (checkCollisions && (lengthSinceLastCheck >= stepScale || optimumReached))
+            if (checkCollisions && (lengthSinceLastCheck >= trustRadius || optimumReached))
             {
               lengthSinceLastCheck = 0;
               hppDout(info, "Checking for collision at iteration " << numberOfIterations);

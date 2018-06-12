@@ -115,6 +115,12 @@ namespace hpp {
           bool interrupt_;
           void interrupt();
 
+          /// Solve subproblem for constrained QP
+          value_type solveSubSubProblem(vector_t c, vector_t k, value_type r, value_type error = 0.001) const;
+
+          /// Solve min x^T A x - 2b^T x s.t ||x|| < r
+          vector_t solveQP(matrix_t A, vector_t b, value_type r) const;
+
           void getHessianFiniteDiff (const Splines_t fullSplines, const vector_t x,
               std::vector<matrix_t> hessianStack, value_type stepSize,
               LinearConstraint constraint) const;
