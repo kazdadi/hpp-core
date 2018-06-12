@@ -115,10 +115,15 @@ namespace hpp {
           bool interrupt_;
           void interrupt();
 
-          value_type backtrackingLineSearch
-            (SquaredLength<Spline, 1> cost, Splines_t& splines, LinearConstraint constraint,
-             const vector_t x, vector_t direction, value_type derivative,
-             value_type initialStep, value_type factor=.8, value_type threshold=.5) const;
+          void getHessianFiniteDiff (const Splines_t fullSplines, const vector_t x,
+              std::vector<matrix_t> hessianStack, value_type stepSize,
+              LinearConstraint constraint) const;
+
+          value_type backtrackingLineSearch (SquaredLength<Spline, 1> cost,
+              Splines_t& splines, LinearConstraint constraint,
+             const vector_t reducedParams, vector_t direction,
+             value_type derivative, value_type initialStep,
+             value_type factor=.8, value_type threshold=.5) const;
 
           void getFullSplines (const vector_t reducedParams,
               Splines_t& fullSplines, LinearConstraint constraint) const;
