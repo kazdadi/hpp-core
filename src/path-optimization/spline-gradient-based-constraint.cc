@@ -525,7 +525,7 @@ namespace hpp {
             if (diff < 0) u /= 2;
             else u = u - diff/derivative;
           }
-          while (std::abs(diff) > error);
+          while (std::abs(diff/derivative) > error);
           return u;
         }
 
@@ -539,10 +539,9 @@ namespace hpp {
           vector_t d = eigenSolver.eigenvalues();
           if (d[0] > 0)
           {
-            x = V * (d.cwiseInverse().asDiagonal() * (V.transpose() * b));
+            x = A.llt().solve(b);
             if (x.norm() <= r) return x;
           }
-          // c is the decomposition of b in the basis of eigenvectors of A
           vector_t c(b.size());
           c = V.transpose() * b;
 
@@ -554,8 +553,9 @@ namespace hpp {
           // Solve sum_1^n [c_i/(u + k_i)]^2 = r^2, u > 0
           value_type u = solveSubSubProblem(c, k, r);
 
-          x = V * ((d + u*ones).cwiseInverse().asDiagonal() * (V.transpose() * b));
-          return x;
+          // x = V * ((d + u*ones).cwiseInverse().asDiagonal() * (V.transpose() * b));
+          
+          return (A + u * matrix_t::Identity(b.size(), b.size())).llt().solve(b);;
         }
 
       template <int _PB, int _SO>
@@ -707,18 +707,18 @@ namespace hpp {
       template <int _PB, int _SO>
         PathVectorPtr_t SplineGradientBasedConstraint<_PB, _SO>::optimize (const PathVectorPtr_t& path)
         {
-          value_type alpha = problem().getParameter(
-              "SplineGradientBasedConstraint/alpha", value_type(.1));
           size_type maxIterations = problem().getParameter(
               "SplineGradientBasedConstraint/maxIterations", size_type(200));
-          value_type maxStep = problem().getParameter(
-              "SplineGradientBasedConstraint/maxStep", value_type(1));
           value_type stepThreshold = problem().getParameter(
               "SplineGradientBasedConstraint/stepThreshold", value_type(.01));
+          value_type lineSearchTrustRadius = problem().getParameter(
+              "SplineGradientBasedConstraint/lineSearchTrustRadius", value_type(1));
           value_type trustRadius = problem().getParameter(
               "SplineGradientBasedConstraint/trustRadius", value_type(.5));
           value_type stepSize = problem().getParameter(
-              "SplineGradientBasedConstraint/stepSize", value_type(.0001));
+              "SplineGradientBasedConstraint/stepSize", value_type(.00001));
+          bool useHessian = problem().getParameter(
+              "SplineGradientBasedConstraint/useHessian", true);
           bool checkJointBound = problem().getParameter(
               "SplineGradientBasedConstraint/checkJointBound", true);
           bool checkCollisions = problem().getParameter(
@@ -762,6 +762,10 @@ namespace hpp {
           getParameters(splines, fullParams);
           reducedParams = constraint.PK.transpose() * (fullParams-constraint.xStar);
 
+          matrix_t zeroMatrix(nParameters*rDof, nParameters*rDof);
+          zeroMatrix.setZero();
+          std::vector<matrix_t> hessianStack;
+
           LinearConstraint boundConstraint (nParameters * rDof, 0);
           if (checkJointBound) {
             this->jointBoundConstraint(splines, boundConstraint);
@@ -802,15 +806,17 @@ namespace hpp {
             matrix_t jacobian;
 
             getValueJacobianReduced(splines, reducedParams, value, jacobian, constraint);
+            hppDout(info, "Constraints error: " << value.norm());
             std::size_t nbConstraints = value.size();
 
-            matrix_t zeroMatrix(nParameters*rDof, nParameters*rDof);
-            zeroMatrix.setZero();
-            std::vector<matrix_t> hessianStack(nbConstraints, zeroMatrix);
-            getHessianFiniteDiff(splines, reducedParams, hessianStack, stepSize, constraint);
-
             matrix_t fullUnconstrainedHessian(nParameters*rDof, nParameters*rDof);
-            cost.hessian(fullUnconstrainedHessian, splines);
+            if (useHessian)
+            {
+              if (hessianStack.size() == 0) hessianStack.resize(nbConstraints, zeroMatrix);
+              getHessianFiniteDiff(splines, reducedParams, hessianStack, stepSize, constraint);
+              cost.hessian(fullUnconstrainedHessian, splines);
+            }
+
             vector_t fullGradient(nParameters*rDof);
             cost.jacobian(fullGradient, splines);
 
@@ -827,23 +833,25 @@ namespace hpp {
             matrix_t inverseGram(nbConstraints, nbConstraints);
             inverseGram = (jacobian.transpose() * jacobian).inverse();
             matrix_t fullHessian(nParameters*rDof, nParameters*rDof);
-
-            fullHessian = fullUnconstrainedHessian;
-            for (std::size_t i = 0; i < nbConstraints; ++i)
-            {
-              value_type coeff = 0;
-              for (std::size_t j = 0; j < nbConstraints; ++j) {
-                coeff += fullGradient.dot(jacobian.row(i)) * inverseGram.coeff(i, j);
-              }
-              fullHessian -= coeff * hessianStack[i];
-            }
+            matrix_t PK;
 
             matrix_t hessian(reducedDim, reducedDim);
-            matrix_t PK;
-            PK = constraint.PK * jacobianConstraint.PK;
-            hessian = PK.transpose() * fullHessian * PK;
+            if (useHessian)
+            {
+              fullHessian = fullUnconstrainedHessian;
+              for (std::size_t i = 0; i < nbConstraints; ++i)
+              {
+                value_type coeff = 0;
+                for (std::size_t j = 0; j < nbConstraints; ++j) {
+                  coeff += fullGradient.dot(jacobian.row(i)) * inverseGram.coeff(i, j);
+                }
+                fullHessian -= coeff * hessianStack[i];
+              }
 
-            hppDout(info, "Constraints error: " << value.norm());
+              PK = constraint.PK * jacobianConstraint.PK;
+              hessian = PK.transpose() * fullHessian * PK;
+            }
+
             if (checkCollisions)
             addCollisionConstraintsValueJacobian(splines, reducedParams, value, jacobian, constraint,
                 collFunctions, collValues, indices, ratios);
@@ -861,8 +869,8 @@ namespace hpp {
             { vector_t gradient(reducedDim);
               gradient = constraint.PK.transpose() * fullGradient;
 
-              alpha = backtrackingLineSearch(cost, splines, constraint,
-                  reducedParams, -gradient, gradient.norm(), maxStep);
+              value_type alpha = backtrackingLineSearch(cost, splines, constraint,
+                  reducedParams, -gradient, gradient.norm(), lineSearchTrustRadius);
               hppDout(info, alpha);
               gradient = - alpha * gradient/gradient.norm();
 
@@ -907,10 +915,28 @@ namespace hpp {
 
               step = correction + gradient;
 
-              // TODO: Solve min 1/2 d^T H d - b^T d s.t ||d|| <= r
-              vector_t s = solveQP(hessian, -PK.transpose()*fullGradient, trustRadius);
-              step = correction + jacobianConstraint.PK * s;
-              hppDout(info, correction.norm() << " " << (jacobianConstraint.PK*s).norm() << " " << step.norm());
+              if (useHessian) {
+                vector_t s = jacobianConstraint.PK*solveQP(hessian, -(PK.transpose()*fullGradient), trustRadius);
+                // TODO: External function
+                vector_t secondOrderCorrection(reducedDim);
+                secondOrderCorrection.setZero();
+                hppDout(info, jacobian.rows() << " " << jacobian.cols());
+                hppDout(info, reducedDim);
+                for (std::size_t j = 0; j < nbConstraints; ++j)
+                {
+                  vector_t v_j(reducedDim);
+                  v_j.setZero();
+                  for (std::size_t i = 0; i < nbConstraints; ++i)
+                  {
+                    v_j += inverseGram.coeff(i, j) * jacobian.row(i);
+                  }
+                  secondOrderCorrection += (s.transpose() * (hessianStack[j] * s)).coeff(0, 0) * v_j;
+                }
+                hppDout(info, correction.size() << s.size() << secondOrderCorrection.size());
+                step = correction + s + secondOrderCorrection;
+                hppDout(info, correction.norm() << " " << s.norm()
+                    << " " << secondOrderCorrection.norm() << " " << step.norm());
+              }
 
               // 5.3
               // Check if optimum is reached
