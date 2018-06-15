@@ -35,7 +35,7 @@ namespace hpp {
     /// \{
     namespace pathOptimization {
       template <int _PolynomeBasis, int _SplineOrder>
-      class HPP_CORE_DLLAPI SplineGradientBasedConstraint : public SplineGradientBasedAbstract<_PolynomeBasis, _SplineOrder>
+        class HPP_CORE_DLLAPI SplineGradientBasedConstraint : public SplineGradientBasedAbstract<_PolynomeBasis, _SplineOrder>
       {
         public:
           typedef SplineGradientBasedAbstract<_PolynomeBasis, _SplineOrder> Base;
@@ -129,15 +129,15 @@ namespace hpp {
 
           value_type backtrackingLineSearch (SquaredLength<Spline, 1> cost,
               Splines_t& splines, LinearConstraint constraint,
-             const vector_t reducedParams, vector_t direction,
-             value_type derivative, value_type initialStep,
-             value_type factor=.8, value_type threshold=.5) const;
+              const vector_t reducedParams, vector_t direction,
+              value_type derivative, value_type initialStep,
+              value_type factor=.8, value_type threshold=.5) const;
 
           void getFullSplines (const vector_t reducedParams,
               Splines_t& fullSplines, LinearConstraint constraint) const;
- 
+
           void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
-         vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
+              vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
@@ -147,8 +147,22 @@ namespace hpp {
              std::vector<std::size_t> indices,
              std::vector<value_type> ratios) const;
 
-        bool validateConstraints (const Splines_t fullSplines, const vector_t value,
-         LinearConstraint constraint, value_type factor=1) const;
+          void addCollisionHessianFiniteDiffBad
+            (const Splines_t fullSplines, const vector_t reducedParams,
+             std::vector<matrix_t>& hessianStack, LinearConstraint constraint,
+             std::vector<DifferentiableFunctionPtr_t> collFunctions,
+             std::vector<value_type> collValues, std::vector<std::size_t> indices,
+             std::vector<value_type> ratios, value_type stepSize, std::size_t nbConstraints) const;
+
+          void addCollisionHessianFiniteDiff
+            (const Splines_t fullSplines, const vector_t reducedParams,
+             std::vector<matrix_t>& hessianStack, LinearConstraint constraint,
+             std::vector<DifferentiableFunctionPtr_t> collFunctions,
+             std::vector<value_type> collValues, std::vector<std::size_t> indices,
+             std::vector<value_type> ratios, value_type stepSize, std::size_t nbConstraints) const;
+
+          bool validateConstraints (const Splines_t fullSplines, const vector_t value,
+              LinearConstraint constraint, value_type factor=1) const;
 
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;
