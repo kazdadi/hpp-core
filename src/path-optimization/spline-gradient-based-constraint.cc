@@ -701,6 +701,7 @@ namespace hpp {
             (*(fullSplines[indices[i]])) (currentConfig, ratios[i]);
             value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[i]);
             collFunctions[i]->jacobian(collJacobian, currentConfig);
+            hppDout(info, collJacobian);
             jacobian.row(row) = collJacobian*splinesJacobian*constraint.PK;
             ++row;
           }
@@ -716,12 +717,19 @@ namespace hpp {
         {
           const std::size_t rDof = robot_->numberDof();
           std::size_t row = nbConstraints;
+
+          Splines_t splinesPlus;
+          Splines_t splinesMinus;
+          Base::copy(fullSplines, splinesPlus);
+          Base::copy(fullSplines, splinesMinus);
+
           for (std::size_t i = 0; i < collFunctions.size(); ++i)
           {
             vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
             matrix_t splinesJacobian(rDof, fullSplines.size()*Spline::NbCoeffs*rDof);
             fullSplines[indices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, ratios[i]);
             splinesJacobian.setZero();
+
             for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j)
             {
               splinesJacobian.block(0, Spline::NbCoeffs*rDof*indices[i] + rDof*j,
@@ -731,33 +739,30 @@ namespace hpp {
             matrix_t collHessian(collFunctions[i]->inputDerivativeSize(),
                 collFunctions[i]->inputDerivativeSize());
 
-
-            // TODO: Assuming d(Spline)/d(Params) is independent of params
-            // May not always hold
-
-            vector_t step(rDof);
-            step.setZero();
+            vector_t step(Spline::NbCoeffs * rDof);
+            vector_t x = fullSplines[indices[i]]->rowParameters();
             for (std::size_t j = 0; j < rDof; ++j)
             {
-              step[j] = stepSize;
+              step.setZero();
+              for (std::size_t k = 0; k < Spline::NbCoeffs; ++k) {
+                step[j + k*rDof] = stepSize;
+              }
+              splinesPlus[indices[i]]->rowParameters(x + step);
+              splinesMinus[indices[i]]->rowParameters(x - step);
+
               vector_t configPlus(collFunctions[i]->inputSize());
               vector_t configMinus(collFunctions[i]->inputSize());
 
-              (*(fullSplines[indices[i]])) (configPlus, ratios[i]);
-              (*(fullSplines[indices[i]])) (configMinus, ratios[i]);
+              (*(splinesPlus[indices[i]])) (configPlus, ratios[i]);
+              (*(splinesMinus[indices[i]])) (configMinus, ratios[i]);
 
               matrix_t collJacobianPlus(1, collFunctions[i]->inputDerivativeSize());
               matrix_t collJacobianMinus(1, collFunctions[i]->inputDerivativeSize());
-
-              // TODO: ???
-              configPlus += step;
-              configMinus -= step;
 
               collFunctions[i]->jacobian(collJacobianPlus, configPlus);
               collFunctions[i]->jacobian(collJacobianMinus, configMinus);
 
               collHessian.row(j) = (collJacobianPlus - collJacobianMinus)/(2*stepSize);
-              step[j] = 0;
             }
 
             hessianStack[row] = splinesJacobian.transpose() * collHessian * splinesJacobian;
@@ -775,12 +780,19 @@ namespace hpp {
         {
           const std::size_t rDof = robot_->numberDof();
           std::size_t row = nbConstraints;
+
+          Splines_t splinesPlus;
+          Splines_t splinesMinus;
+          Base::copy(fullSplines, splinesPlus);
+          Base::copy(fullSplines, splinesMinus);
+
           for (std::size_t i = 0; i < collFunctions.size(); ++i)
           {
             vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
             matrix_t splinesJacobian(rDof, fullSplines.size()*Spline::NbCoeffs*rDof);
             fullSplines[indices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, ratios[i]);
             splinesJacobian.setZero();
+
             for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j)
             {
               splinesJacobian.block(0, Spline::NbCoeffs*rDof*indices[i] + rDof*j,
@@ -790,33 +802,30 @@ namespace hpp {
             matrix_t collHessian(collFunctions[i]->inputDerivativeSize(),
                 collFunctions[i]->inputDerivativeSize());
 
-
-            // TODO: Assuming d(Spline)/d(Params) is independent of params
-            // May not always hold
-
-            vector_t step(rDof);
-            step.setZero();
+            vector_t step(Spline::NbCoeffs * rDof);
+            vector_t x = fullSplines[indices[i]]->rowParameters();
             for (std::size_t j = 0; j < rDof; ++j)
             {
-              step[j] = stepSize;
+              step.setZero();
+              for (std::size_t k = 0; k < Spline::NbCoeffs; ++k) {
+                step[j + k*rDof] = stepSize;
+              }
+              splinesPlus[indices[i]]->rowParameters(x + step);
+              splinesMinus[indices[i]]->rowParameters(x - step);
+
               vector_t configPlus(collFunctions[i]->inputSize());
               vector_t configMinus(collFunctions[i]->inputSize());
 
-              (*(fullSplines[indices[i]])) (configPlus, ratios[i]);
-              (*(fullSplines[indices[i]])) (configMinus, ratios[i]);
+              (*(splinesPlus[indices[i]])) (configPlus, ratios[i]);
+              (*(splinesMinus[indices[i]])) (configMinus, ratios[i]);
 
               matrix_t collJacobianPlus(1, collFunctions[i]->inputDerivativeSize());
               matrix_t collJacobianMinus(1, collFunctions[i]->inputDerivativeSize());
-
-              // TODO: ???
-              configPlus += step;
-              configMinus -= step;
 
               collFunctions[i]->jacobian(collJacobianPlus, configPlus);
               collFunctions[i]->jacobian(collJacobianMinus, configMinus);
 
               collHessian.row(j) = (collJacobianPlus - collJacobianMinus)/(2*stepSize);
-              step[j] = 0;
             }
 
             hessianStack[row] = splinesJacobian.transpose() * collHessian * splinesJacobian;
@@ -961,7 +970,7 @@ namespace hpp {
             {
               getHessianFiniteDiff(splines, reducedParams, hessianStack, stepSize, constraint);
               cost.hessian(fullObjectiveHessian, splines);
-              if (checkCollisions) addCollisionHessianFiniteDiffBad(splines, reducedParams,
+              if (checkCollisions) addCollisionHessianFiniteDiff(splines, reducedParams,
                   hessianStack, constraint, collFunctions, collValues, indices, ratios, stepSize, nbConstraints);
             }
 
@@ -973,6 +982,7 @@ namespace hpp {
             LinearConstraint jacobianConstraint(reducedDim, value.size());
             jacobianConstraint.J = jacobian;
             jacobianConstraint.b = -value;
+            hppDout(info, value.transpose());
             bool feasible = jacobianConstraint.decompose(true);
             if (!feasible) 
             {
@@ -985,19 +995,20 @@ namespace hpp {
             vector_t correction(reducedDim);
             correction = jacobianConstraint.xStar;
 
+            //TODO
             if (useHessian)
             {
-              vector_t fullCorrection = constraint.PK * correction;
-              fullGradient += fullObjectiveHessian * fullCorrection;
+              fullGradient += fullObjectiveHessian * constraint.PK * correction;
               for (std::size_t i = 0; i < nbConstraints; ++i)
               {
                 jacobian.row(i) += (constraint.PK.transpose() * (hessianStack[i] * (constraint.PK * correction))).transpose();
               }
             }
 
-            // TODO: Calculate determinant
-            matrix_t inverseGram(nbConstraints, nbConstraints);
-            inverseGram = (jacobian * jacobian.transpose()).inverse();
+            //TODO
+            hppDout(info, "Gram det: " << (jacobian * jacobian.transpose()).determinant());
+            matrix_t inverseGram = (jacobian * jacobian.transpose()).inverse();
+            hppDout(info, "Inverse Gram det: " << inverseGram.determinant());
             matrix_t fullHessian(nParameters*rDof, nParameters*rDof);
             matrix_t PK;
 
@@ -1005,11 +1016,10 @@ namespace hpp {
             if (useHessian)
             {
               fullHessian = fullObjectiveHessian;
-              matrix_t tmp = fullObjectiveHessian;
-              for (std::size_t i = 0; i < nbConstraints; ++i)
+              for (std::size_t i = 0; i < hessianStack.size(); ++i)
               {
                 value_type coeff = 0;
-                for (std::size_t j = 0; j < nbConstraints; ++j) {
+                for (std::size_t j = 0; j < value.size(); ++j) {
                   coeff += fullGradient.dot(jacobian.row(i)) * inverseGram.coeff(i, j);
                 }
                 fullHessian -= coeff * hessianStack[i];
@@ -1076,18 +1086,19 @@ namespace hpp {
 
               if (useHessian) {
                 // minimize 1/2 xT H x - bT x
-                vector_t s = jacobianConstraint.PK*solveQP(hessian,
-                    -(jacobianConstraint.PK.transpose()*(constraint.PK.transpose()*fullGradient)), trustRadius);
+                vector_t sol = solveQP(hessian, -PK.transpose()*fullGradient, trustRadius);
+                hppDout(info, .5* sol.transpose() * hessian * sol + fullGradient.transpose() * PK * sol);
+                vector_t s = jacobianConstraint.PK * sol;
                 hppDout(info, "Current gradient " << (jacobianConstraint.PK.transpose()*(constraint.PK.transpose()*fullGradient)).norm());
                 hppDout(info, "Solution norm " << s.norm());
                 // TODO: External function
                 vector_t secondOrderCorrection(reducedDim);
                 secondOrderCorrection.setZero();
-                for (std::size_t j = 0; j < nbConstraints; ++j)
+                for (std::size_t j = 0; j < value.size(); ++j)
                 {
                   vector_t v_j(reducedDim);
                   v_j.setZero();
-                  for (std::size_t i = 0; i < nbConstraints; ++i)
+                  for (std::size_t i = 0; i < value.size(); ++i)
                   {
                     v_j += inverseGram.coeff(i, j) * jacobian.row(i);
                   }
@@ -1095,12 +1106,12 @@ namespace hpp {
                 }
                 step = correction + s + secondOrderCorrection;
 
-                vector_t sol = jacobianConstraint.PK.transpose() * s;
-                value_type predictedDecrease = (1/2 * sol.transpose() * hessian * sol - (jacobianConstraint.PK.transpose()*(constraint.PK.transpose()*fullGradient)).transpose()*sol).coeff(0,0);
+                value_type predictedDecrease = -((.5 * sol.transpose() * hessian * sol + fullGradient.transpose() * PK *sol).coeff(0,0));
                 vector_t tmp = reducedParams + step;
                 Splines_t tmpSpl;
                 Base::copy(splines, tmpSpl);
-                getFullSplines(tmp, tmpSpl, constraint);
+                getFullSplines(reducedParams + step, tmpSpl, constraint);
+                getFullSplines(reducedParams + correction, splines, constraint);
                 value_type newCost;
                 value_type oldCost;
                 cost.value(newCost, tmpSpl);
@@ -1110,6 +1121,8 @@ namespace hpp {
                 matrix_t tmpJacobian;
                 getValueJacobianReduced(tmpSpl, reducedParams+step, tmpValue, tmpJacobian, constraint);
 
+                hppDout(info, "Actual decrease " << oldCost - newCost);
+                hppDout(info, "Predicted decrease " << predictedDecrease);
                 hppDout(info, "Actual/Predicted " << (oldCost - newCost)/predictedDecrease);
                 bool validNewState = validateConstraints(tmpSpl, tmpValue, constraint, 500);
                 if ((oldCost - newCost)/predictedDecrease <= 0. || !validNewState) {
