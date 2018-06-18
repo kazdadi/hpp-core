@@ -102,7 +102,7 @@ namespace hpp {
            qFree_ = q;
          }
          
-         computeJacobian();
+         createFunction();
        }
 
 	Configuration_t qFree_, qColl_;
@@ -138,7 +138,7 @@ namespace hpp {
          contactPoint_ = result.getContact (0).pos;
          hppDout (info, "contact point = " << contactPoint_.transpose());
 
-         computeJacobian();
+         createFunction ();
        }
 
        fcl::CollisionResult checkCollision (const Configuration_t& q, bool enableContact)
@@ -152,12 +152,9 @@ namespace hpp {
          return result;
        }
 
-       void computeJacobian()
+       void createFunction()
        {
          static const matrix3_t I3 (matrix3_t::Identity());
-
-         DifferentiableFunctionPtr_t f;
-         vector3_t u;
 
          robot_->currentConfiguration (qColl_);
          robot_->computeForwardKinematics ();
@@ -181,8 +178,8 @@ namespace hpp {
            hppDout (info, "x1 in J1 = " << x1_J1.transpose());
            hppDout (info, "x2 in J1 = " << x2_J1.transpose());
 
-           u = (x2_J1 - x1_J1).normalized();
-           f = constraints::RelativePosition::create
+           u_ = (x2_J1 - x1_J1).normalized();
+           f_ = constraints::RelativePosition::create
              ("", robot_, joint1, joint2, Transform3f(I3, x1_J1), Transform3f(I3 ,x2_J2));
          } else{ // object2 = fixed obstacle and has no joint
            vector3_t x2_J2 (contactPoint_);
@@ -194,33 +191,39 @@ namespace hpp {
            vector3_t x1_J2 (M1.act (x1_J1));
            hppDout (info, "x1 in J2 = " << x1_J2.transpose());
 
-           u = (x1_J2 - x2_J2).normalized();
-           f = constraints::Position::create
+           u_ = (x1_J2 - x2_J2).normalized();
+           f_ = constraints::Position::create
              ("", robot_, joint1, Transform3f(I3 ,x1_J1), Transform3f(I3 ,x2_J2));
          }
-         matrix_t Jpos (f->outputSize (), f->inputDerivativeSize ());
-         f->jacobian (Jpos, qFree_);
-         J_ = u.transpose () * Jpos;
-         assert (J_.rows () == 1);
+         J_.resize (f_->outputSize (), f_->inputDerivativeSize ());
+
+         LiegroupElement val(f_->outputSpace());
+         val = (*f_) (qFree_);
+         offset_ = u_.dot(val.vector());
        }
 
        virtual void impl_compute (LiegroupElement& result, vectorIn_t argument)
          const
        {
-         pinocchio::difference<se3::LieGroupTpl> (robot_, argument, qFree_, difference_);
-         result.vector () = J_ * difference_;
+         LiegroupElement val(f_->outputSpace());
+         val = (*f_) (argument);
+         result.vector ()[0] = u_.dot(val.vector()) - offset_ ;
          result.check ();
        }
-       virtual void impl_jacobian (matrixOut_t jacobian, vectorIn_t) const
+       virtual void impl_jacobian (matrixOut_t jacobian, vectorIn_t arg) const
        {
-         jacobian = J_;
+         f_->jacobian (J_, arg);
+         jacobian = u_.transpose() * J_;
        }
       private:
 	DevicePtr_t robot_;
         CollisionObjectConstPtr_t object1_, object2_;
-	matrix_t J_;
+        DifferentiableFunctionPtr_t f_;
+        vector3_t u_;
         vector3_t contactPoint_;
+        value_type offset_;
 	mutable vector_t difference_;
+	mutable matrix_t J_;
       }; // class CollisionFunction
     } // namespace pathOptimization
   } // namespace core
