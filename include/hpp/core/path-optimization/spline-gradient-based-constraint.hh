@@ -147,13 +147,6 @@ namespace hpp {
              std::vector<std::size_t> indices,
              std::vector<value_type> ratios) const;
 
-          void addCollisionHessianFiniteDiffBad
-            (const Splines_t fullSplines, const vector_t reducedParams,
-             std::vector<matrix_t>& hessianStack, LinearConstraint constraint,
-             std::vector<DifferentiableFunctionPtr_t> collFunctions,
-             std::vector<value_type> collValues, std::vector<std::size_t> indices,
-             std::vector<value_type> ratios, value_type stepSize, std::size_t nbConstraints) const;
-
           void addCollisionHessianFiniteDiff
             (const Splines_t fullSplines, const vector_t reducedParams,
              std::vector<matrix_t>& hessianStack, LinearConstraint constraint,
