@@ -198,7 +198,7 @@ namespace hpp {
          J_.resize (f_->outputSize (), f_->inputDerivativeSize ());
 
          LiegroupElement val(f_->outputSpace());
-         val = (*f_) (qFree_);
+         val = (*f_) (qColl_);
          offset_ = u_.dot(val.vector());
        }
 

@@ -112,13 +112,10 @@ namespace hpp {
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
 
-          bool interrupt_;
-          void interrupt();
-
           size_type getNbConstraints(const Splines_t splines) const;
 
           /// Solve subproblem for constrained QP
-          value_type solveSubSubProblem(vector_t c, vector_t k, value_type r, value_type error = 0.001) const;
+          value_type solveSubSubProblem(vector_t c, vector_t k, value_type r, value_type error = std::pow(10, -8)) const;
 
           /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
           vector_t solveQP(matrix_t A, vector_t b, value_type r) const;
@@ -155,7 +152,10 @@ namespace hpp {
              std::vector<value_type> ratios, value_type stepSize, std::size_t nbConstraints) const;
 
           bool validateConstraints (const Splines_t fullSplines, const vector_t value,
+              std::vector<DifferentiableFunctionPtr_t> collFunctions,
               LinearConstraint constraint, value_type factor=1) const;
+
+          void analyzeHessians (const std::vector<matrix_t> hessianStack, const matrix_t PK) const;
 
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;
