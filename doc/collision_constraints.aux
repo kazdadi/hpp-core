@@ -1,0 +1,37 @@
+\relax 
+\@writefile{toc}{\contentsline {section}{\numberline {1}Assumptions}{2}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Collision Constraints}{3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Notations}{3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Constraints}{3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Example of algorithm using naive step projection on affine constraints null space}{4}}
+\newlabel{section:naiveProjectionSection}{{2.3}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Explaination of the step projection on the constraints null space}{4}}
+\newlabel{section:lagoLLTSection}{{2.4}{4}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Algorithm and alpha tuning. Number of algorithm iterations is increasing for each collision-test box. When reaching the command ``update $Jf$'', collision information are gathered and constraints are computed, next paths will apply these constraints.\relax }}{6}}
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:finiteStateMachine}{{1}{6}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Weighted Cost}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}New cost definition}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Illustration of an optimized path obtained by weighted cost. Note the conservation of lengths proportionalites.\relax }}{7}}
+\newlabel{fig:weightedCost}{{2}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Gradient implementation}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Illustration (without weights) of the third component of the path gradient.\relax }}{8}}
+\newlabel{fig:gradient}{{3}{8}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Hessian implementation}{8}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Example of results in 2D}{9}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Result for a very long path from $(-100;1)$ to $(100;-1)$ which Random Shortcut fails to optimize. Left: for $i_{max} = 30$ iterations (local min obtained for 41 iterations exactly). Right: for $i_{max} = 30$ iterations + second run of 14 iterations based on the first result. So we see the interest of relaxing/canceling old constraints...\relax }}{9}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Work in progress}{10}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Affine constraints to compensate linearization error}{10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Linearization error.\relax }}{10}}
+\newlabel{fig:linearError}{{4}{10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Collision-constraints frames notations.\relax }}{10}}
+\newlabel{fig:framesConstraintError}{{5}{10}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Raw version to summarize implemented work\relax }}{11}}
+\newlabel{algo:affineCompensation}{{1}{11}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Possible future work}{13}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Constraints relaxation}{13}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Add problem constraints}{13}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Optimization on $SO(3)$ Lie group}{14}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Representation of a subpart of $SO(3)$ when only $\omega _z$ is varying.\relax }}{14}}
+\newlabel{fig:quaternions}{{6}{14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Waypoints prunning ?}{15}}

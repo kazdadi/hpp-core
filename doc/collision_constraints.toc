@@ -1,0 +1,18 @@
+\contentsline {section}{\numberline {1}Assumptions}{2}
+\contentsline {section}{\numberline {2}Collision Constraints}{3}
+\contentsline {subsection}{\numberline {2.1}Notations}{3}
+\contentsline {subsection}{\numberline {2.2}Constraints}{3}
+\contentsline {subsection}{\numberline {2.3}Example of algorithm using naive step projection on affine constraints null space}{4}
+\contentsline {subsection}{\numberline {2.4}Explaination of the step projection on the constraints null space}{4}
+\contentsline {section}{\numberline {3}Weighted Cost}{7}
+\contentsline {subsection}{\numberline {3.1}New cost definition}{7}
+\contentsline {subsection}{\numberline {3.2}Gradient implementation}{7}
+\contentsline {subsection}{\numberline {3.3}Hessian implementation}{8}
+\contentsline {subsection}{\numberline {3.4}Example of results in 2D}{9}
+\contentsline {section}{\numberline {4}Work in progress}{10}
+\contentsline {subsection}{\numberline {4.1}Affine constraints to compensate linearization error}{10}
+\contentsline {section}{\numberline {5}Possible future work}{13}
+\contentsline {subsection}{\numberline {5.1}Constraints relaxation}{13}
+\contentsline {subsection}{\numberline {5.2}Add problem constraints}{13}
+\contentsline {subsection}{\numberline {5.3}Optimization on $SO(3)$ Lie group}{14}
+\contentsline {subsection}{\numberline {5.4}Waypoints prunning ?}{15}
