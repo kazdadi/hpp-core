@@ -152,10 +152,13 @@ namespace hpp {
              std::vector<value_type> ratios, value_type stepSize, std::size_t nbConstraints) const;
 
           bool validateConstraints (const Splines_t fullSplines, const vector_t value,
-              std::vector<DifferentiableFunctionPtr_t> collFunctions,
+              std::vector<value_type> collValues,
               LinearConstraint constraint, value_type factor=1) const;
 
           void analyzeHessians (const std::vector<matrix_t> hessianStack, const matrix_t PK) const;
+
+          vector_t getSecondOrderCorrection (const vector_t step, const matrix_t jacobian,
+              const std::vector<matrix_t> hessianStack, const matrix_t inverseGram, const matrix_t PK) const;
 
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;

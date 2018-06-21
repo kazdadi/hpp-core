@@ -549,6 +549,7 @@ namespace hpp {
           if (d[0] > 0)
           {
             x = A.llt().solve(b);
+            hppDout(info, "Estimated distance to optimum is: " << x.norm());
             if (x.norm() <= r)
             {
               return x;
@@ -764,7 +765,7 @@ namespace hpp {
       template <int _PB, int _SO>
         bool SplineGradientBasedConstraint<_PB, _SO>::validateConstraints
         (const Splines_t fullSplines, const vector_t value,
-         const std::vector<DifferentiableFunctionPtr_t> collFunctions,
+         const std::vector<value_type> collValues,
          LinearConstraint constraint, value_type factor) const
         {
           std::size_t row = 0;
@@ -776,24 +777,39 @@ namespace hpp {
               std::size_t numberOfConstraints = configProj->dimension();
               if (value.segment(row, numberOfConstraints).norm() > factor * configProj->errorThreshold())
               {
-                hppDout(info, "Invalid constraint at index " << row << " with error "
-                    << value.segment(row, numberOfConstraints).norm() << " > " << factor * configProj->errorThreshold());
                 return false;
               }
               row += numberOfConstraints;
             }
           }
-          for (std::size_t i = 0; i < collFunctions.size(); ++i)
+          for (std::size_t i = 0; i < collValues.size(); ++i)
           {
-            if (std::abs(value[row]) > factor * std::pow(10, -5))
-            {
-              hppDout(info, "Invalid constraint at index " << row << " with error "
-                  << value[row] << " > " << factor * std::pow(10, -5));
-              return false;
-            }
+            if (std::abs(value[row]) > factor * collValues[i]*0.01) return false;
             ++row;
           }
           return true;
+        }
+
+      template <int _PB, int _SO>
+        vector_t SplineGradientBasedConstraint<_PB, _SO>::getSecondOrderCorrection
+        (const vector_t step, const matrix_t jacobian, const std::vector<matrix_t> hessianStack,
+         const matrix_t inverseGram, const matrix_t PK) const
+        {
+          vector_t secondOrderCorrection(step.size());
+          secondOrderCorrection.setZero();
+          for (std::size_t j = 0; j < inverseGram.rows(); ++j)
+          {
+            vector_t v_j(step.size());
+            v_j.setZero();
+            for (std::size_t i = 0; i < inverseGram.rows(); ++i)
+            {
+              v_j += inverseGram.coeff(i, j) * jacobian.row(i);
+            }
+            secondOrderCorrection +=
+              (step.transpose() * (PK.transpose() * (hessianStack[j] * (PK * step))))
+              .coeff(0, 0) * v_j;
+          }
+          return secondOrderCorrection;
         }
 
       template <int _PB, int _SO>
@@ -894,6 +910,7 @@ namespace hpp {
           std::vector<std::size_t> activeBoundIndices;
 
           size_type numberOfIterations = 0;
+          value_type lengthSinceLastCheck = 0;
 
           Splines_t newSplines;
           Base::copy(splines, newSplines);
@@ -906,6 +923,9 @@ namespace hpp {
           std::vector<value_type> collValues;
           std::vector<std::size_t> indices;
           std::vector<value_type> times;
+
+          std::vector<vector_t> collisionFreePaths;
+          collisionFreePaths.push_back(reducedParams);
           // 5
           while (!this->interrupt_)
           {
@@ -925,15 +945,6 @@ namespace hpp {
             if (checkCollisions) addCollisionConstraintsValueJacobian(splines, reducedParams,
                 value, jacobian, constraint, collFunctions, collValues, indices, times);
 
-            if (useHessian)
-            {
-              getHessianFiniteDiff(splines, reducedParams, hessianStack, stepSize, constraint);
-              cost.hessian(fullObjectiveHessian, splines);
-              if (checkCollisions) addCollisionHessianFiniteDiff(splines, reducedParams,
-                  hessianStack, constraint, collFunctions, collValues, indices, times, stepSize, nbConstraints);
-            }
-
-            hppDout(info, "Current parameters: " << reducedParams.transpose());
             hppDout(info, "Constraints error: " << value.norm() << " | Full value vector: " << value.transpose());
 
             vector_t fullGradient(nParameters*rDof);
@@ -955,9 +966,14 @@ namespace hpp {
             vector_t correction(reducedDim);
             correction = jacobianConstraint.xStar;
 
-            // TODO: Use corrected information for problem solution
             if (useHessian)
             {
+              getFullSplines(reducedParams + correction, splines, constraint);
+              getHessianFiniteDiff(splines, reducedParams + correction, hessianStack, stepSize, constraint);
+              cost.hessian(fullObjectiveHessian, splines);
+              if (checkCollisions) addCollisionHessianFiniteDiff(splines, reducedParams + correction,
+                  hessianStack, constraint, collFunctions, collValues, indices, times, stepSize, nbConstraints);
+
               fullGradient += fullObjectiveHessian * (constraint.PK * correction);
               for (std::size_t i = 0; i < nbConstraints; ++i)
               {
@@ -967,11 +983,7 @@ namespace hpp {
             jacobianConstraint.J = jacobian;
             jacobianConstraint.decompose();
 
-            // TODO: Remove under
-            // analyzeHessians(hessianStack, constraint.PK * jacobianConstraint.PK);
-            // TODO: Remove above
-
-            // TODO: Block 2nd order impossible directions?
+            // TODO: Block 2nd order impossible directions if constraints are not independent?
             Eigen::JacobiSVD<matrix_t> svd(jacobian.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
             matrix_t inverseGram;
             hppDout(info, svd.singularValues().transpose().reverse());
@@ -995,7 +1007,6 @@ namespace hpp {
             inverseGram = svd.matrixV() * pseudoInverse.asDiagonal() * svd.matrixV().transpose();
             matrix_t fullHessian(nParameters*rDof, nParameters*rDof);
             matrix_t PK;
-            // end TODO
 
             matrix_t hessian(reducedDim, reducedDim);
             if (useHessian)
@@ -1018,81 +1029,21 @@ namespace hpp {
             step = correction;
             vector_t secondOrderCorrection(reducedDim);
             vector_t s(reducedDim);
-            if (validateConstraints(splines, value, collFunctions, constraint, 10))
+            if (validateConstraints(splines, value, collValues, constraint, 10))
             {
               value_type newCost;
               value_type oldCost;
-              vector_t gradient(reducedDim);
-              if (!useHessian)
-              {
-                gradient = constraint.PK.transpose() * fullGradient;
-
-                value_type alpha = backtrackingLineSearch(cost, splines, constraint,
-                    reducedParams, -gradient, gradient.norm(), lineSearchTrustRadius);
-                hppDout(info, alpha);
-                gradient = - alpha * gradient/gradient.norm();
-
-                gradient = jacobianConstraint.PK.transpose()*gradient;
-
-                LinearConstraint projectedBounds(jacobianConstraint.PK.cols(), 0);
-                jacobianConstraint.reduceConstraint(boundConstraintReduced, projectedBounds);
-                if (checkJointBound)
-                {
-                  // 5.2
-                  // Remove gradient components that break the inequality constraints
-                  activeBoundIndices.clear();
-                  for (std::size_t i = 0; i < projectedBounds.J.rows(); ++i)
-                  {
-                    if (projectedBounds.J.row(i)*gradient <= projectedBounds.b[i] - boundConstraintReduced.J.row(i)*reducedParams)
-                    {
-                      activeBoundIndices.push_back(i);
-                      hppDout(info, "Bound " << i << " is active: "
-                          << projectedBounds.J.row(i)*gradient - projectedBounds.b[i]
-                          + boundConstraintReduced.J.row(i)*reducedParams);
-                    }
-                  }
-                  if (activeBoundIndices.size() > 0)
-                  {
-                    LinearConstraint activeBoundsProjected(jacobianConstraint.PK.cols(), activeBoundIndices.size());
-                    for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
-                    {
-                      activeBoundsProjected.J.row(i) = projectedBounds.J.row(activeBoundIndices[i]);
-                      activeBoundsProjected.b[i] = projectedBounds.b[activeBoundIndices[i]] - boundConstraintReduced.J.row(activeBoundIndices[i])*reducedParams;
-                    }
-                    activeBoundsProjected.decompose();
-                    gradient = activeBoundsProjected.xStar + activeBoundsProjected.PK*(activeBoundsProjected.PK.transpose()*gradient);
-                  }
-                }
-
-                // Project gradient back to parameter space
-                gradient = jacobianConstraint.PK*gradient;
-                for (std::size_t i = 0; i < activeBoundIndices.size(); ++i)
-                {
-                  hppDout(info, (boundConstraintReduced.J*(reducedParams + correction + gradient) - boundConstraintReduced.b)[activeBoundIndices[i]]);
-                }
-                step = correction + gradient;
-              }
 
               if (useHessian)
               {
+                // TODO: If trustRadius is too small, take multiple steps
                 // minimize 1/2 xT H x - bT x
 QP:
-                if (trustRadius < 0.0001) break;
+                if (trustRadius < 0.001) break;
                 hppDout(info, "Gradient norm: " << (-PK.transpose()*fullGradient).norm());
                 vector_t sol = solveQP(hessian, -PK.transpose()*fullGradient, trustRadius);
-                hppDout(info, "Reduced solution norm " << sol.norm() << " / " << trustRadius);
                 s = jacobianConstraint.PK * sol;
-                secondOrderCorrection.setZero();
-                for (std::size_t j = 0; j < value.size(); ++j)
-                {
-                  vector_t v_j(reducedDim);
-                  v_j.setZero();
-                  for (std::size_t i = 0; i < value.size(); ++i)
-                  {
-                    v_j += inverseGram.coeff(i, j) * jacobian.row(i);
-                  }
-                  secondOrderCorrection += (s.transpose() * (constraint.PK.transpose() * (hessianStack[j] * (constraint.PK * s)))).coeff(0, 0) * v_j;
-                }
+                secondOrderCorrection = getSecondOrderCorrection(s, jacobian, hessianStack, inverseGram, constraint.PK);
                 step = correction + s + secondOrderCorrection;
                 hppDout(info, "Correction norm " << correction.norm()
                     << " Second order: " << secondOrderCorrection.norm());
@@ -1118,16 +1069,8 @@ QP:
                 if (checkCollisions) addCollisionConstraintsValueJacobian(splines, reducedParams+correction,
                     value, tmpJacobian, constraint, collFunctions, collValues, indices, times);
 
-                hppDout(info, "New constraint error " << tmpValue.norm());
-
-                hppDout(info, "Old collision error " << value.segment(nbConstraints, collFunctions.size()).transpose());
-                hppDout(info, "New collision error " << tmpValue.segment(nbConstraints, collFunctions.size()).transpose());
-
-                hppDout(info, "Actual decrease " << oldCost - newCost);
-                hppDout(info, "Predicted decrease " << predictedDecrease);
                 hppDout(info, "Actual/Predicted " << (oldCost - newCost)/predictedDecrease);
-                bool validNewState = validateConstraints(tmpSpl, tmpValue, collFunctions, constraint, 10);
-                hppDout(info, "New path is valid: " << validNewState);
+                bool validNewState = validateConstraints(tmpSpl, tmpValue, collValues, constraint, 10);
 
                 if ((oldCost - newCost)/predictedDecrease <= 0. || !validNewState) {
                   trustRadius *= .25;
@@ -1140,21 +1083,22 @@ QP:
                   hppDout(info, "Reducing trust radius to " << trustRadius);
                 }
                 hppDout(info, "Conditions for radius increase: " << ((oldCost - newCost)/predictedDecrease > .8)
-                    << (sol.norm() >= .5*trustRadius) << (validNewState));
+                    << (s.norm() >= .5*trustRadius) << (validNewState));
                 if ((oldCost - newCost)/predictedDecrease > .8
-                    && sol.norm() >= .5 * trustRadius && validNewState)
+                    && s.norm() >= .5 * trustRadius && validNewState)
                 {
                   trustRadius *= 2;
                   hppDout(info, "Increasing trust radius to " << trustRadius);
                 }
               }
-              hppDout(info, step.norm());
-
               // 5.3
               // Check if optimum is reached
-              optimumReached = (oldCost - newCost < costThreshold && validateConstraints(splines, value, collFunctions, constraint))
+              optimumReached = (oldCost - newCost < costThreshold && validateConstraints(splines, value, collValues, constraint))
                 || (numberOfIterations == maxIterations);
             }
+            lengthSinceLastCheck += s.norm();
+            hppDout(info, "Since last collision check: " << lengthSinceLastCheck);
+            vector_t newParams = reducedParams + step;
 
             value_type costValue;
             cost.value(costValue, splines);
@@ -1164,10 +1108,12 @@ QP:
             // 5.4
             // If a collision is detected, add collision constraints
             // and reset path to valid state
-            // TODO: Rewrite collision checking
-            if (checkCollisions)
+            value_type initialRadius = s.norm();
+            // TODO
+            if (checkCollisions and (lengthSinceLastCheck > collisionCheckStep or optimumReached))
             {
               hppDout(info, "Checking for collisions");
+              lengthSinceLastCheck = 0;
               value_type alpha = 1.;
               vector_t collisionParams;
               bool collisionFound = false;
@@ -1175,55 +1121,48 @@ QP:
               Reports_t tmpReports;
               do
               {
-                vector_t newParams = reducedParams + correction + alpha * s + alpha*alpha * secondOrderCorrection;
+                if (alpha < 1)
+                {
+                  s = -jacobianConstraint.PK * solveQP(hessian, -PK.transpose()*fullGradient, alpha*s.norm());
+                  secondOrderCorrection = getSecondOrderCorrection(s, jacobian, hessianStack, inverseGram, constraint.PK);
+                }
+
+                newParams = reducedParams + correction + s + secondOrderCorrection;
                 getFullSplines(newParams, newSplines, constraint);
                 tmpReports = this->validatePath (newSplines, true);
                 noCollision = tmpReports.empty();
-                hppDout(info, noCollision);
 
-                if (noCollision) collisionFreeParams = newParams;
+                if (noCollision) {
+                  hppDout(info, "Found collision free path");
+                  collisionFreeParams = newParams;
+                  collisionFreePaths.push_back(newParams);
+                }
                 else {
                   collisionParams = newParams;
                   collisionFound = true;
-                  alpha *= .5;
+                  alpha *= .0;
                   reports = tmpReports;
                 }
               }
-              while (!noCollision and alpha*s.norm() > stepMin);
+              while (!noCollision and alpha*initialRadius > stepMin);
 
-              if (alpha*s.norm() <= stepMin and collisionFound)
+              if (alpha*initialRadius <= stepMin and collisionFound)
               {
                 alpha = 0;
-                vector_t newParams = reducedParams + correction;
+                newParams = collisionFreeParams;
                 getFullSplines(newParams, newSplines, constraint);
-                tmpReports = this->validatePath (newSplines, true);
-                noCollision = tmpReports.empty();
-
-                if (noCollision)
-                {
-                  collisionFreeParams = newParams;
-                  hppDout(info, "Initial state is valid");
-                }
-                else {
-                  hppDout(info, "Initial parameters too close to a collision");
-                  collisionParams = newParams;
-                  collisionFound = true;
-                  alpha *= .5;
-                  reports = tmpReports;
-                }
               }
 
-              step = correction + alpha * s + alpha*alpha * secondOrderCorrection;
               if (collisionFound)
               {
                 getFullSplines(collisionFreeParams, newSplines, constraint);
-                vector_t newCollValues(collValues.size());
+                std::vector<value_type> newCollValues = collValues;
 
                 for (std::size_t i = 0; i < collValues.size(); ++i) {
                   vector_t currentConfig(collFunctions[i]->inputSize());
                   (*(newSplines[indices[i]])) (currentConfig, times[i]);
                   newCollValues[i] = ((*(collFunctions[i])) (currentConfig)).vector()[0];
-                  // collValues[i] = newCollValues[i];
+                  collValues[i] = newCollValues[i];
                 }
 
                 hppDout(info, "Adding collision function");
@@ -1241,16 +1180,39 @@ QP:
                 indices.push_back(reports[0].second);
                 times.push_back(reports[0].first->parameter);
                 hessianStack.push_back(zeroMatrix);
+
+                // TODO
+                if (false)
+                {
+                  std::vector<value_type> tmpValues;
+                  for (std::size_t i = 0; i < collisionFreePaths.size(); ++i) {
+                    getFullSplines(collisionFreePaths[i], newSplines, constraint);
+                    DifferentiableFunctionPtr_t tmp_cc =
+                      CollisionFunction::create(robot_,
+                          newSplines[reports[0].second],
+                          collisionSplines[reports[0].second],
+                          reports[0].first);
+                    vector_t tmpCollisionFreeConfig(tmp_cc->inputSize());
+                    (*(newSplines[reports[0].second])) (tmpCollisionFreeConfig, reports[0].first->parameter);
+                    if ((((*tmp_cc) (tmpCollisionFreeConfig)).vector())[0] > 0.0001)
+                      tmpValues.push_back((((*tmp_cc) (tmpCollisionFreeConfig)).vector())[0]);
+                  }
+                  hppDout(info, "Collision free paths available:");
+                  for (std::size_t i = 0; i < tmpValues.size(); ++i) hppDout(info, tmpValues[i]);
+                }
+                // end TODO
               }
             }
             if (noCollision && optimumReached) {
               hppDout(info, "Terminated successfully");
               break;
             }
-            reducedParams = collisionFreeParams;
+            reducedParams = newParams;
           }
           // 6
           getFullSplines(reducedParams, splines, constraint);
+          getParameters(splines, fullParams);
+          hppDout(info, "Continuity conditions: " << (constraint.J * fullParams - constraint.b).norm());
           return this->buildPathVector(splines);
         }
 
