@@ -612,21 +612,26 @@ namespace hpp {
 
                 vector_t tmp_value(numberOfConstraints);
 
-                matrix_t jac_plus(numberOfConstraints, rDof);
-                matrix_t jac_minus(numberOfConstraints, rDof);
-                jac_plus.setZero();
-                jac_minus.setZero();
+                matrix_t J_plus(numberOfConstraints, configProj->numberNonLockedDof());
+                matrix_t J_minus(numberOfConstraints, configProj->numberNonLockedDof());
+                matrix_t jacPlus(numberOfConstraints, rDof);
+                matrix_t jacMinus(numberOfConstraints, rDof);
+                jacPlus.setZero();
+                jacMinus.setZero();
 
-                configProj->computeValueAndJacobian(initial_plus, tmp_value, jac_plus);
-                configProj->computeValueAndJacobian(initial_minus, tmp_value, jac_minus);
+                configProj->computeValueAndJacobian(initial_plus, tmp_value, J_plus);
+                configProj->computeValueAndJacobian(initial_minus, tmp_value, J_minus);
 
-                matrix_t jac_diff(numberOfConstraints, rDof);
-                jac_diff = (jac_plus - jac_minus)/(2*stepSize);
+                configProj->solver().explicitSolver().freeDers().lview(jacPlus) = J_plus;
+                configProj->solver().explicitSolver().freeDers().lview(jacMinus) = J_minus;
+
+                matrix_t jacDiff(numberOfConstraints, rDof);
+                jacDiff = (jacPlus - jacMinus)/(2*stepSize);
 
                 for (std::size_t k = 0; k < numberOfConstraints; ++k)
                 {
                   hessianStack[constraintIndex+k].row(j).
-                    segment(rDof*Spline::NbCoeffs*i, rDof) = jac_diff.row(k);
+                    segment(rDof*Spline::NbCoeffs*i, rDof) = jacDiff.row(k);
                 }
                 constraintIndex += numberOfConstraints;
               }
@@ -642,12 +647,15 @@ namespace hpp {
         {
           const size_type nParameters = fullSplines.size() * Spline::NbCoeffs;
           const size_type rDof = robot_->numberDof();
+          Splines_t tmpSplines;
+          Base::copy(fullSplines, tmpSplines);
+          getFullSplines(reducedParams, tmpSplines, constraint);
           value.resize(0);
           jacobian.resize(0, reducedParams.size());
-          for (std::size_t i = 1; i < fullSplines.size(); ++i)
+          for (std::size_t i = 1; i < tmpSplines.size(); ++i)
           {
-            Configuration_t initial = fullSplines[i]->initial();
-            ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
+            Configuration_t initial = tmpSplines[i]->initial();
+            ConfigProjectorPtr_t configProj = tmpSplines[i]->constraints()->configProjector();
             if (configProj)
             {
               size_type numberOfConstraints = configProj->dimension();
@@ -655,10 +663,38 @@ namespace hpp {
               value.conservativeResize(value.size()+numberOfConstraints);
               value.bottomRows(numberOfConstraints).setZero();
               matrix_t fullJacobian(numberOfConstraints, nParameters*rDof);
+              matrix_t J(numberOfConstraints, configProj->numberNonLockedDof());
               fullJacobian.setZero();
               configProj->computeValueAndJacobian(initial, value.bottomRows(numberOfConstraints),
                   fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
+
+              bool stop = false;
+              fullJacobian.resize(numberOfConstraints, Eigen::NoChange);
+              fullJacobian.setZero();
+              configProj->computeValueAndJacobian(initial, value.bottomRows(numberOfConstraints), J);
+
+              configProj->solver().explicitSolver().freeDers().lview(
+                  fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof)
+                  ) = J;
               jacobian.bottomRows(numberOfConstraints) = fullJacobian * constraint.PK;
+
+              //J.resize(configProj->solver().explicitSolver().derSize(), configProj->solver().explicitSolver().derSize());
+              //configProj->solver().explicitSolver().jacobian(J, initial);
+              //configProj->solver().explicitSolver().outDers().lview(
+                  //fullJacobian.block(numberOfConstraints, rDof*Spline::NbCoeffs*i, configProj->solver().explicitSolver().derSize(), rDof)
+                  //) = J;
+
+              if (stop) {
+                hppDout(info, "\n" << J);
+                hppDout(info, "\n" << *configProj);
+                hppDout(info, "\n" << fullJacobian.block(0, rDof*Spline::NbCoeffs*i, fullJacobian.rows(), rDof));
+                size_type rmax,cmax;
+                fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof).maxCoeff(&rmax,&cmax);
+                hppDout(info, "\n" << rmax << "," << cmax);
+                hppDout(info, fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof).norm() << " " << jacobian.norm());
+                hppDout(info, initial.transpose());
+                hppDout(info, reducedParams.transpose());
+              }
             }
           }
         }
@@ -768,6 +804,7 @@ namespace hpp {
          const std::vector<value_type> collValues,
          LinearConstraint constraint, value_type factor) const
         {
+          // TODO: Return max ratio of error over threshold
           std::size_t row = 0;
           for (std::size_t i = 1; i < fullSplines.size(); ++i)
           {
@@ -805,7 +842,7 @@ namespace hpp {
             {
               v_j += inverseGram.coeff(i, j) * jacobian.row(i);
             }
-            secondOrderCorrection +=
+            secondOrderCorrection += 0.5*
               (step.transpose() * (PK.transpose() * (hessianStack[j] * (PK * step))))
               .coeff(0, 0) * v_j;
           }
@@ -955,8 +992,10 @@ namespace hpp {
             jacobianConstraint.b = -value;
             bool feasible = jacobianConstraint.decompose(true);
             hppDout(info, "Constraint rank: " << jacobianConstraint.rank << "/" << jacobianConstraint.J.rows());
+
             if (!feasible) 
             {
+              hppDout(info, "\n" << jacobian);
               hppDout(info, "Not enough degrees of freedom to satisfy equality constraints");
               break;
             }
@@ -968,7 +1007,6 @@ namespace hpp {
 
             if (useHessian)
             {
-              getFullSplines(reducedParams + correction, splines, constraint);
               getHessianFiniteDiff(splines, reducedParams + correction, hessianStack, stepSize, constraint);
               cost.hessian(fullObjectiveHessian, splines);
               if (checkCollisions) addCollisionHessianFiniteDiff(splines, reducedParams + correction,
@@ -1029,6 +1067,7 @@ namespace hpp {
             step = correction;
             vector_t secondOrderCorrection(reducedDim);
             vector_t s(reducedDim);
+            s.setZero();
             if (validateConstraints(splines, value, collValues, constraint, 10))
             {
               value_type newCost;
@@ -1052,25 +1091,38 @@ QP:
                 value_type predictedDecrease = -(
                     .5 * sol.transpose() * hessian * sol
                     + fullGradient.transpose() * PK *sol).coeff(0,0);
-                vector_t tmp = reducedParams + step;
-                Splines_t tmpSpl;
-                Base::copy(splines, tmpSpl);
-                getFullSplines(reducedParams + step, tmpSpl, constraint);
-                getFullSplines(reducedParams + correction, splines, constraint);
-                cost.value(newCost, tmpSpl);
-                cost.value(oldCost, splines);
+
+                hppDout(info, "Constraint errors");
+                hppDout(info, value.norm());
 
                 vector_t tmpValue;
                 matrix_t tmpJacobian;
-                getValueJacobianReduced(tmpSpl, reducedParams+step, tmpValue, tmpJacobian, constraint);
-                if (checkCollisions) addCollisionConstraintsValueJacobian(tmpSpl, reducedParams+step,
-                    tmpValue, tmpJacobian, constraint, collFunctions, collValues, indices, times);
-                getValueJacobianReduced(splines, reducedParams+correction, value, tmpJacobian, constraint);
-                if (checkCollisions) addCollisionConstraintsValueJacobian(splines, reducedParams+correction,
-                    value, tmpJacobian, constraint, collFunctions, collValues, indices, times);
+                getValueJacobianReduced(splines, reducedParams+correction+s, tmpValue, tmpJacobian, constraint);
+                if (checkCollisions) {
+                  addCollisionConstraintsValueJacobian(splines, reducedParams+correction+s,
+                      tmpValue, tmpJacobian, constraint, collFunctions, collValues, indices, times);
+                }
+                hppDout(info, tmpValue.norm());
 
+                getValueJacobianReduced(splines, reducedParams+correction, value, tmpJacobian, constraint);
+                getValueJacobianReduced(splines, reducedParams+step, tmpValue, tmpJacobian, constraint);
+                if (checkCollisions) {
+                  addCollisionConstraintsValueJacobian(splines, reducedParams+step,
+                      tmpValue, tmpJacobian, constraint, collFunctions, collValues, indices, times);
+                  addCollisionConstraintsValueJacobian(splines, reducedParams+correction,
+                      value, tmpJacobian, constraint, collFunctions, collValues, indices, times);
+                }
+                hppDout(info, value.norm());
+                hppDout(info, tmpValue.norm());
+
+                Splines_t tmpSplines;
+                Base::copy(splines, tmpSplines);
+                getFullSplines(reducedParams+correction, splines, constraint);
+                getFullSplines(reducedParams+step, tmpSplines, constraint);
+                cost.value(newCost, tmpSplines);
+                cost.value(oldCost, splines);
                 hppDout(info, "Actual/Predicted " << (oldCost - newCost)/predictedDecrease);
-                bool validNewState = validateConstraints(tmpSpl, tmpValue, collValues, constraint, 10);
+                bool validNewState = validateConstraints(splines, tmpValue, collValues, constraint, 10);
 
                 if ((oldCost - newCost)/predictedDecrease <= 0. || !validNewState) {
                   trustRadius *= .25;
