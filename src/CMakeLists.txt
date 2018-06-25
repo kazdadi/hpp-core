@@ -94,6 +94,7 @@ path-validations.cc
   steering-method/dubins.cc
   steering-method/snibud.cc
   steering-method/spline.cc
+  steering-method/cross-state-optimization/function.cc
   straight-path.cc
   visibility-prm-planner.cc
   weighed-distance.cc

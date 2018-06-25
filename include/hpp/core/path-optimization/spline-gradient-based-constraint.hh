@@ -79,7 +79,7 @@ namespace hpp {
 
           // Constraint creation
 
-          virtual void addProblemConstraints (const PathVectorPtr_t& init, const Splines_t& splines, LinearConstraint& lc, SplineOptimizationDatas_t& sods) const;
+          virtual void addProblemConstraints (Splines_t splines, HybridSolver hybridSolver) const;
 
           void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
 

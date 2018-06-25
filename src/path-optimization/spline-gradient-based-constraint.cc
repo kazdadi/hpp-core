@@ -25,6 +25,8 @@
 
 #include <hpp/constraints/svd.hh>
 
+#include <hpp/core/explicit-numerical-constraint.hh>
+#include <../src/steering-method/cross-state-optimization/function.cc>
 #include <hpp/core/config-projector.hh>
 #include <hpp/core/problem.hh>
 #include <hpp/core/collision-path-validation-report.hh>
@@ -283,11 +285,122 @@ namespace hpp {
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::addProblemConstraints
-        (const PathVectorPtr_t& init, const Splines_t& splines, LinearConstraint& lc, SplineOptimizationDatas_t& ss) const
+        (Splines_t splines, HybridSolver hybridSolver) const
         {
-          assert (init->numberPaths() == splines.size() && ss.size() == splines.size());
-          for (std::size_t i = 0; i < splines.size(); ++i) {
-            addProblemConstraintOnPath (init->pathAtRank(i), i, splines[i], lc, ss[i]);
+          // TODO: Add continuity constraints
+          size_type nArgs = splines.size() * Spline::NbCoeffs * robot_->configSize();
+          size_type nDers = splines.size() * Spline::NbCoeffs * robot_->configDof();
+          for (std::size_t i = 0; i < splines.size(); ++i)
+          {
+            Configuration_t endPrev;
+            Configuration_t initial = splines[i]->initial();
+            Configuration_t end = splines[i]->end();
+
+            ConfigProjectorPtr_t configProjectorPrev;
+            ConfigProjectorPtr_t configProjector = splines[i]->constraints()->configProjector();
+
+            if (i >= 1) {
+              endPrev = splines[i-1]->end();
+              configProjectorPrev = splines[i-1]->constraints()->configProjector();
+            }
+
+            if (configProjector)
+            {
+              NumericalConstraints_t numericalConstraints = configProjector->numericalConstraints();
+              for (std::size_t j = 0; j < numericalConstraints.size(); ++j)
+              {
+                // TODO: Check all comparison types?
+                bool equalToZero = numericalConstraints[j]->comparisonType()[0] == constraints::Equality;
+
+                ExplicitNumericalConstraintPtr_t explicitConstraint =
+                  HPP_DYNAMIC_PTR_CAST (ExplicitNumericalConstraint, numericalConstraints[j]);
+                if (explicitConstraint)
+                {
+                  // Explicit constraints
+                  if (equalToZero)
+                  {
+                    // TODO: Add initial constraints to end of previous spline
+                    // and end constraints to start of next spline.
+                    // Assures continuity of explicited variables if free variables are continuous
+                    // Assuming constraints are compatible with continuity
+                    // --
+                    // Adding initial constraints
+                    segments_t outArg = explicitConstraint->outputConf();
+                    segments_t outDer = explicitConstraint->outputVelocity();
+                    segments_t inArg = explicitConstraint->inputConf();
+                    segments_t inDer = explicitConstraint->inputVelocity();
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      inArg[k].first += robot_->configSize() * Spline::NbCoeffs * i;
+                      inDer[k].first += robot_->configDof() * Spline::NbCoeffs * i;
+                    }
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      outArg[k].first += robot_->configSize() * Spline::NbCoeffs * i;
+                      outDer[k].first += robot_->configDof() * Spline::NbCoeffs * i;
+                    }
+                    hybridSolver.explicitSolver().add(explicitConstraint->functionPtr(), inArg, outArg, inDer, outDer);
+
+                    // Adding end constraints
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      inArg[k].first += robot_->configSize() * (Spline::NbCoeffs - 1);
+                      inDer[k].first += robot_->configDof() * (Spline::NbCoeffs - 1);
+                    }
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      outArg[k].first += robot_->configSize() * (Spline::NbCoeffs - 1);
+                      outDer[k].first += robot_->configDof() * (Spline::NbCoeffs - 1);
+                    }
+                    hybridSolver.explicitSolver().add(explicitConstraint->functionPtr(), inArg, outArg, inDer, outDer);
+                  }
+                  else // Equality type constraints
+                  {
+                    // TODO: X_output_end = f(X_input_end) + X_output_initial
+                    segments_t outArg = explicitConstraint->outputConf();
+                    segments_t outDer = explicitConstraint->outputVelocity();
+                    segments_t inArg = explicitConstraint->outputConf();
+                    segments_t inDer = explicitConstraint->outputVelocity();
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      inArg[k].first += robot_->configSize() * Spline::NbCoeffs * i;
+                      inDer[k].first += robot_->configDof() * Spline::NbCoeffs * i;
+                    }
+                    for (std::size_t k = 0; k < outArg.size(); ++k)
+                    {
+                      outArg[k].first += robot_->configSize() * (Spline::NbCoeffs * (i+1) - 1);
+                      outDer[k].first += robot_->configDof() * (Spline::NbCoeffs * (i+1) - 1);
+                    }
+                    Identity::Ptr_t identity (new Identity(explicitConstraint->functionPtr()->outputSpace(), "Identity"));
+
+                    // Explicit constraint X_output_end = X_output_initial
+                    hybridSolver.explicitSolver().add(identity, inArg, outArg, inDer, outDer);
+                  }
+                }
+                else
+                {
+                  NumericalConstraintPtr_t numericalConstraint = numericalConstraints[j];
+                  segment_t inArgs;
+                  segment_t inDers;
+                  inArgs.second = robot_->configSize();
+                  inDers.second = robot_->configDof();
+                  if (i >= 1 and (!configProjectorPrev or !(configProjectorPrev->contains(numericalConstraint))))
+                  {
+                    inArgs.first = robot_->configSize()*Spline::NbCoeffs*i;
+                    inDers.first = robot_->configDof() *Spline::NbCoeffs*i;
+                    StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
+                          nArgs, nDers, inArgs, inDers));
+                  }
+                  if (i <= splines.size() - 2)
+                  {
+                    inArgs.first = robot_->configSize() * (Spline::NbCoeffs*(i+1) - 1);
+                    inDers.first = robot_->configDof() * (Spline::NbCoeffs*(i+1) - 1);
+                    StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
+                          nArgs, nDers, inArgs, inDers));
+                  }
+                }
+              }
+            }
           }
         }
 
@@ -870,8 +983,8 @@ namespace hpp {
               "SplineGradientBasedConstraint/maxIterations", size_type(200));
           bool checkJointBound = problem().getParameter(
               "SplineGradientBasedConstraint/checkJointBound", true);
-          bool checkCollision = problem().getParameter(
-              "SplineGradientBasedConstraint/checkCollision", true);
+          bool checkCollisions = problem().getParameter(
+              "SplineGradientBasedConstraint/checkCollisions", true);
 
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
@@ -889,6 +1002,8 @@ namespace hpp {
           this->appendEquivalentSpline (input, splines);
           this->initializePathValidation(splines);
           const size_type nParameters = splines.size() * Spline::NbCoeffs;
+          size_type nArgs = nParameters * robot_->configSize();
+          size_type nDers = nParameters * rDof;
 
           // 2
           enum { MaxContinuityOrder = int( (SplineOrder - 1) / 2) };
@@ -897,36 +1012,20 @@ namespace hpp {
           LinearConstraint constraint (nParameters * rDof, 0);
           SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
           this->addContinuityConstraints (splines, orderContinuity, solvers, constraint);
-          HybridSolver problemConstraints(nParameters * robot_->configSize(),
-              nParameters * rDof);
 
-          for (std::size_t i = 1; i < splines.size()-1; ++i)
-          {
-            Configuration_t endPrev = splines[i-1]->end();
-            Configuration_t initial = splines[i]->initial();
-            Configuration_t end = splines[i]->end();
+          HybridSolver hybridSolver(nArgs, nDers);
+          std::vector<std::size_t> nbFreeVariables(splines.size(), 0);
 
-            ConfigProjectorPtr_t configProjectorPrev = splines[i-1]->constraints()->configProjector();
-            ConfigProjectorPtr_t configProjector = splines[i]->constraints()->configProjector();
-
-            if (configProjector)
-            {
-              NumericalConstraints_t numericalConstraints = configProjector->numericalConstraints();
-              // TODO: Create total explicit constraint
-              addToHybridSolver(configProjector->explicitSolver(), problemConstraints, i);
-              for (std::size_t j = 0; j < numericalConstraints; ++j)
-              {
-                NumericalConstraintPtr_t numericalConstraint = numericalConstraints[j];
-                // TODO: Check for duplicates
-                // TODO: Create total constraint (check comparison types)
-                addToHybridSolver(numericalConstraint, problemConstraints, i);
-              }
-            }
-          }
+          addProblemConstraints(splines, hybridSolver);
+          // TODO: Add constraint if nonlinear (one or both of the Dof isn't free) and non redundant
+          // and remove added constraints from constraint.J
+          // addNonlinearContinuityConstraints(splines, hybridSolver, constraint);
           vector_t fullParameters(nParameters*rDof);
           getParameters(splines, fullParameters);
 
-          vector_t freeParameters = problemConstraints.explicitSolver().freeDers().rview(fullParameters);
+          //vector_t freeParameters = hybridSolver.explicitSolver().freeDers().rview(fullParameters);
+          hppDout(info, fullParameters);
+          //hppDout(info, freeParameters);
 
           // 3
           // TODO add weights
