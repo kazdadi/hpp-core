@@ -21,6 +21,7 @@
 #include <hpp/constraints/explicit-solver.hh>
 
 #include <hpp/constraints/hybrid-solver.hh>
+#include <hpp/core/config-projector.hh>
 
 #include <hpp/core/path-optimization/spline-gradient-based-abstract.hh>
 #include <hpp/core/path-vector.hh>
@@ -79,9 +80,13 @@ namespace hpp {
 
           // Constraint creation
 
-          virtual void addProblemConstraints (Splines_t splines, HybridSolver hybridSolver) const;
+          virtual void addProblemConstraints (const Splines_t splines,
+              HybridSolver& hybridSolver, LinearConstraint& constraint) const;
 
-          void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
+          void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
+              LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
+
+            void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
 
           /// \param guessThr Threshold used to check whether the Jacobian
           ///                 contains rows of zeros, in which case the
