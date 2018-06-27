@@ -81,10 +81,14 @@ namespace hpp {
           // Constraint creation
 
           virtual void addProblemConstraints (const Splines_t splines,
-              HybridSolver& hybridSolver, LinearConstraint& constraint) const;
+              HybridSolver& hybridSolver, LinearConstraint& constraint,
+              std::vector<size_type>& dofPerSpline) const;
 
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
+
+          matrix_t costMatrix(const Splines_t splines, const LinearConstraint linearConstraints,
+              std::vector<size_type> dofPerSpline) const;
 
             void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
 
@@ -129,17 +133,11 @@ namespace hpp {
               std::vector<matrix_t>& hessianStack, value_type stepSize,
               LinearConstraint constraint) const;
 
-          value_type backtrackingLineSearch (SquaredLength<Spline, 1> cost,
-              Splines_t& splines, LinearConstraint constraint,
-              const vector_t reducedParams, vector_t direction,
-              value_type derivative, value_type initialStep,
-              value_type factor=.8, value_type threshold=.5) const;
-
           void getFullSplines (const vector_t reducedParams,
-              Splines_t& fullSplines, LinearConstraint constraint) const;
+              Splines_t& fullSplines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
 
           void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
-              vector_t& value, matrix_t& jacobian, LinearConstraint constraint) const;
+              vector_t& value, matrix_t& jacobian, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
