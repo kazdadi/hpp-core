@@ -62,6 +62,7 @@ namespace hpp {
 
         void impl_jacobian (matrixOut_t J, vectorIn_t arg) const
         {
+          J.setZero();
           inner_->jacobian(J.middleCols (sd_.first, sd_.second),
               arg.segment (sa_.first, sa_.second));
         }

@@ -287,7 +287,8 @@ namespace hpp {
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::addProblemConstraints
         (const Splines_t splines, HybridSolver& hybridSolver, LinearConstraint& constraint,
-         std::vector<size_type>& dofPerSpline) const
+         std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
+         size_type& nbConstraints) const
         {
           // TODO: Explicit constraints derivatives
           // TODO: Add continuity constraints
@@ -344,8 +345,9 @@ namespace hpp {
                       outArg[k].first += robot_->configSize() * Spline::NbCoeffs * i;
                       outDer[k].first += robot_->numberDof() * Spline::NbCoeffs * i;
                     }
-                    hybridSolver.explicitSolver().add(explicitConstraint->functionPtr(), inArg, outArg, inDer, outDer);
+                    hybridSolver.explicitSolver().add(explicitConstraint->explicitFunction(), inArg, outArg, inDer, outDer);
                     dofPerSpline[i] -= explicitConstraint->functionPtr()->outputDerivativeSize();
+                    argPerSpline[i] -= explicitConstraint->functionPtr()->outputSize();
 
                     // Adding derivative constraints to remove them from the parameters vector
                     // The actual nature of the constraint is irrelevant
@@ -356,21 +358,21 @@ namespace hpp {
                         outArg[k].first += robot_->configSize();
                         outDer[k].first += robot_->numberDof();
                       }
-                      hybridSolver.explicitSolver().add(explicitConstraint->functionPtr(), inArg, outArg, inDer, outDer);
+                      hybridSolver.explicitSolver().add(explicitConstraint->explicitFunction(), inArg, outArg, inDer, outDer);
                     }
 
                     // Adding end constraints
                     for (std::size_t k = 0; k < inArg.size(); ++k)
                     {
-                      inArg[k].first += robot_->configSize() * (Spline::NbCoeffs - order - 1);
-                      inDer[k].first += robot_->numberDof() * (Spline::NbCoeffs - order - 1);
+                      inArg[k].first += robot_->configSize() * (Spline::NbCoeffs - 1);
+                      inDer[k].first += robot_->numberDof() * (Spline::NbCoeffs - 1);
                     }
                     for (std::size_t k = 0; k < outArg.size(); ++k)
                     {
                       outArg[k].first += robot_->configSize();
                       outDer[k].first += robot_->numberDof();
                     }
-                    hybridSolver.explicitSolver().add(explicitConstraint->functionPtr(), inArg, outArg, inDer, outDer);
+                    hybridSolver.explicitSolver().add(explicitConstraint->explicitFunction(), inArg, outArg, inDer, outDer);
                   }
                   else // Equality type constraints
                   {
@@ -384,7 +386,7 @@ namespace hpp {
                       constraint.addRows(outDer[k].second);
                       constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first,
                           outDer[k].second, outDer[k].second) = matrix_t::Identity(outDer[k].second, outDer[k].second);
-                      constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first + (Spline::NbCoeffs-order-1)*robot_->numberDof(),
+                      constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first + (Spline::NbCoeffs-1)*robot_->numberDof(),
                           outDer[k].second, outDer[k].second) = -matrix_t::Identity(outDer[k].second, outDer[k].second);
                       constraint.b.bottomRows(outDer[k].second).setZero();
                     }
@@ -403,13 +405,18 @@ namespace hpp {
                     inDers.first = robot_->numberDof() *Spline::NbCoeffs*i;
                     StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
                           nArgs, nDers, inArgs, inDers));
+                    // TODO Priority?
+                    hybridSolver.add(initialNumericalconstraint, 0, numericalConstraint->comparisonType());
+                    nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
                   }
                   if (i <= splines.size() - 2)
                   {
-                    inArgs.first = robot_->configSize() * (Spline::NbCoeffs*(i+1) - order - 1);
-                    inDers.first = robot_->numberDof() * (Spline::NbCoeffs*(i+1) - order - 1);
-                    StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
+                    inArgs.first = robot_->configSize() * (Spline::NbCoeffs*(i+1) - 1);
+                    inDers.first = robot_->numberDof() * (Spline::NbCoeffs*(i+1) - 1);
+                    StateFunction::Ptr_t endNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
                           nArgs, nDers, inArgs, inDers));
+                    hybridSolver.add(endNumericalconstraint, 0, numericalConstraint->comparisonType());
+                    nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
                   }
                 }
               }
@@ -435,8 +442,9 @@ namespace hpp {
                     outArg[k].first += robot_->configSize() * Spline::NbCoeffs * i;
                     outDer[k].first += robot_->numberDof() * Spline::NbCoeffs * i;
                   }
-                  hybridSolver.explicitSolver().add((*it)->functionPtr(), inArg, outArg, inDer, outDer);
+                  hybridSolver.explicitSolver().add((*it)->explicitFunction(), inArg, outArg, inDer, outDer);
                   dofPerSpline[i] -= (*it)->functionPtr()->outputDerivativeSize();
+                  argPerSpline[i] -= (*it)->functionPtr()->outputSize();
 
                   // Adding derivative constraints to remove them from the parameters vector
                   // The actual nature of the constraint is irrelevant
@@ -447,21 +455,21 @@ namespace hpp {
                       outArg[k].first += robot_->configSize();
                       outDer[k].first += robot_->numberDof();
                     }
-                    hybridSolver.explicitSolver().add((*it)->functionPtr(), inArg, outArg, inDer, outDer);
+                    hybridSolver.explicitSolver().add((*it)->explicitFunction(), inArg, outArg, inDer, outDer);
                   }
 
                   // Adding end constraints
                   for (std::size_t k = 0; k < inArg.size(); ++k)
                   {
-                    inArg[k].first += robot_->configSize() * (Spline::NbCoeffs - order - 1);
-                    inDer[k].first += robot_->numberDof() * (Spline::NbCoeffs - order - 1);
+                    inArg[k].first += robot_->configSize() * (Spline::NbCoeffs - 1);
+                    inDer[k].first += robot_->numberDof() * (Spline::NbCoeffs - 1);
                   }
                   for (std::size_t k = 0; k < outArg.size(); ++k)
                   {
                     outArg[k].first += robot_->configSize();
                     outDer[k].first += robot_->numberDof();
                   }
-                  hybridSolver.explicitSolver().add((*it)->functionPtr(), inArg, outArg, inDer, outDer);
+                  hybridSolver.explicitSolver().add((*it)->explicitFunction(), inArg, outArg, inDer, outDer);
                 }
                 else // Equality type constraints
                 {
@@ -475,7 +483,7 @@ namespace hpp {
                     constraint.addRows(outDer[k].second);
                     constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first,
                         outDer[k].second, outDer[k].second) = matrix_t::Identity(outDer[k].second, outDer[k].second);
-                    constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first + (Spline::NbCoeffs-order-1)*robot_->numberDof(),
+                    constraint.J.block(constraint.J.rows() - outDer[k].second, outDer[k].first + (Spline::NbCoeffs-1)*robot_->numberDof(),
                         outDer[k].second, outDer[k].second) = -matrix_t::Identity(outDer[k].second, outDer[k].second);
                     constraint.b.bottomRows(outDer[k].second).setZero();
                   }
@@ -483,6 +491,7 @@ namespace hpp {
               }
             }
           }
+          hybridSolver.explicitSolverHasChanged();
         }
 
       bool contains (const size_type index, const segments_t segments)
@@ -510,7 +519,7 @@ namespace hpp {
               bool leftFree = true;
               bool rightFree = true;
               if (i > 0)
-                leftFree = contains(robot_->numberDof() * (Spline::NbCoeffs * i - order - 1) + j, freeDofs);
+                leftFree = contains(robot_->numberDof() * (Spline::NbCoeffs * i - 1) + j, freeDofs);
               if (i < splines.size())
                 rightFree = contains(robot_->numberDof() * Spline::NbCoeffs * i + j, freeDofs);
 
@@ -519,9 +528,9 @@ namespace hpp {
                 for (std::size_t o = 0; o < order + 1; ++o) {
                   linearConstraints.addRows(1);
                   linearConstraints.J.bottomRows(1) = continuityConstraints.J.row(
-                      o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                      o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                   linearConstraints.b.bottomRows(1) = continuityConstraints.b.row(
-                    o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                    o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                 }
               }
               else if (leftFree and i > 0)
@@ -529,9 +538,9 @@ namespace hpp {
                 for (std::size_t o = 0; o < order + 1; ++o) {
                   nonlinearContinuityConstraints.addRows(1);
                   nonlinearContinuityConstraints.J.bottomRows(1) = continuityConstraints.J.row(
-                      o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                      o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                   nonlinearContinuityConstraints.b.bottomRows(1) = continuityConstraints.b.row(
-                      o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                      o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                 }
               }
               else if (rightFree and i < splines.size())
@@ -539,9 +548,9 @@ namespace hpp {
                 for (std::size_t o = 0; o < order + 1; ++o) {
                   nonlinearContinuityConstraints.addRows(1);
                   nonlinearContinuityConstraints.J.bottomRows(1) = continuityConstraints.J.row(
-                      o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                      o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                   nonlinearContinuityConstraints.b.bottomRows(1) = continuityConstraints.b.row(
-                      o * splines.size() * robot_->numberDof() + robot_->numberDof() * i + j);
+                      o * (splines.size() + 1) * robot_->numberDof() + robot_->numberDof() * i + j);
                 }
               }
               else if (!leftFree and !rightFree)
@@ -555,7 +564,7 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
-        matrix_t SplineGradientBasedConstraint<_PB, _SO>::costMatrix(const Splines_t splines,
+        matrix_t SplineGradientBasedConstraint<_PB, _SO>::costHessian(const Splines_t splines,
             const LinearConstraint linearConstraints, std::vector<size_type> dofPerSpline) const
         {
           matrix_t hessian(linearConstraints.J.cols(), linearConstraints.J.cols());
@@ -563,23 +572,22 @@ namespace hpp {
           size_type splineIndex = 0;
           for (std::size_t i = 0; i < dofPerSpline.size(); ++i)
           {
-            matrix_t integrals(int (Spline::NbCoeffs), int (Spline::NbCoeffs));
+            size_type nbCoeffs = Spline::NbCoeffs;
+            matrix_t integrals(nbCoeffs, nbCoeffs);
             splines[i]->squaredNormBasisFunctionIntegral(1, integrals);
             size_type nDof = dofPerSpline[i];
-            for (std::size_t j = 0; j < Spline::NbCoeffs; ++j)
+            for (std::size_t j = 0; j < nbCoeffs; ++j)
             {
-              for (std::size_t k = 0; k < Spline::NbCoeffs; ++k)
+              for (std::size_t k = 0; k < nbCoeffs; ++k)
               {
                 hessian.block(splineIndex + nDof*j, splineIndex + nDof*k, nDof, nDof) =
                   integrals.coeff(j, k) * matrix_t::Identity(nDof, nDof);
               }
             }
-            splineIndex += nDof*Spline::NbCoeffs;
+            splineIndex += nDof*nbCoeffs;
           }
 
-          hppDout(info, "\n" << hessian);
           matrix_t reducedHessian = linearConstraints.PK.transpose() * hessian * linearConstraints.PK;
-          hppDout(info, "\n" << reducedHessian);
           return reducedHessian;
         }
 
@@ -755,28 +763,14 @@ namespace hpp {
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getFullSplines
-        (const vector_t reducedParams, Splines_t& fullSplines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const
+        (const vector_t reducedParams, Splines_t& splines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const
         {
           vector_t freeParameters = linearConstraints.xStar + (linearConstraints.PK*reducedParams);
+
           vector_t fullParameters(hybridSolver.explicitSolver().derSize());
           fullParameters.setZero();
           hybridSolver.explicitSolver().freeDers().transpose().lview(fullParameters) = freeParameters;
-          updateSplines(fullSplines, fullParameters);
-        }
-
-      template <int _PB, int _SO>
-        size_type SplineGradientBasedConstraint<_PB, _SO>::getNbConstraints
-        (const Splines_t splines) const
-        {
-          size_type nbConstraints = 0;
-          for (std::size_t i = 1; i < splines.size(); ++i)
-          {
-            ConfigProjectorPtr_t configProj = splines[i]->constraints()->configProjector();
-            if (configProj) {
-              nbConstraints += configProj->dimension();
-            }
-          }
-          return nbConstraints;
+          updateSplines(splines, fullParameters);
         }
 
       template <int _PB, int _SO>
@@ -913,63 +907,50 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::getValueJacobianReduced
-        (const Splines_t fullSplines, const vector_t reducedParams,
-         vector_t& value, matrix_t& jacobian, LinearConstraint linearConstraints,
-         HybridSolver hybridSolver) const
+        void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsValue
+        (const vector_t x, Splines_t& splines, vector_t& value,
+         const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const
         {
-          const size_type nParameters = fullSplines.size() * Spline::NbCoeffs;
-          const size_type rDof = robot_->numberDof();
-          Splines_t tmpSplines;
-          Base::copy(fullSplines, tmpSplines);
-          getFullSplines(reducedParams, tmpSplines, linearConstraints, hybridSolver);
-          value.resize(0);
-          jacobian.resize(0, reducedParams.size());
-          for (std::size_t i = 1; i < tmpSplines.size(); ++i)
-          {
-            Configuration_t initial = tmpSplines[i]->initial();
-            ConfigProjectorPtr_t configProj = tmpSplines[i]->constraints()->configProjector();
-            if (configProj)
-            {
-              size_type numberOfConstraints = configProj->dimension();
-              jacobian.conservativeResize(jacobian.rows()+numberOfConstraints, Eigen::NoChange);
-              value.conservativeResize(value.size()+numberOfConstraints);
-              value.bottomRows(numberOfConstraints).setZero();
-              matrix_t fullJacobian(numberOfConstraints, nParameters*rDof);
-              matrix_t J(numberOfConstraints, configProj->numberNonLockedDof());
-              fullJacobian.setZero();
-              configProj->computeValueAndJacobian(initial, value.bottomRows(numberOfConstraints),
-                  fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof));
+          getFullSplines(x, splines, linearConstraints, hybridSolver);
 
-              bool stop = false;
-              fullJacobian.resize(numberOfConstraints, Eigen::NoChange);
-              fullJacobian.setZero();
-              configProj->computeValueAndJacobian(initial, value.bottomRows(numberOfConstraints), J);
-
-              configProj->solver().explicitSolver().freeDers().lview(
-                  fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof)
-                  ) = J;
-              jacobian.bottomRows(numberOfConstraints) = fullJacobian * linearConstraints.PK;
-
-              //J.resize(configProj->solver().explicitSolver().derSize(), configProj->solver().explicitSolver().derSize());
-              //configProj->solver().explicitSolver().jacobian(J, initial);
-              //configProj->solver().explicitSolver().outDers().lview(
-                  //fullJacobian.block(numberOfConstraints, rDof*Spline::NbCoeffs*i, configProj->solver().explicitSolver().derSize(), rDof)
-                  //) = J;
-
-              if (stop) {
-                hppDout(info, "\n" << J);
-                hppDout(info, "\n" << *configProj);
-                hppDout(info, "\n" << fullJacobian.block(0, rDof*Spline::NbCoeffs*i, fullJacobian.rows(), rDof));
-                size_type rmax,cmax;
-                fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof).maxCoeff(&rmax,&cmax);
-                hppDout(info, "\n" << rmax << "," << cmax);
-                hppDout(info, fullJacobian.block(0, rDof*Spline::NbCoeffs*i, numberOfConstraints, rDof).norm() << " " << jacobian.norm());
-                hppDout(info, initial.transpose());
-                hppDout(info, reducedParams.transpose());
-              }
-            }
+          vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
+          stateConfiguration.setZero();
+          for (std::size_t i = 0; i < splines.size(); ++i) {
+            splines[i]->at (splines[i]->timeRange().first,
+            stateConfiguration.segment(
+                i*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+            splines[i]->at (splines[i]->timeRange().second,
+            stateConfiguration.segment(
+                ((i+1)*Spline::NbCoeffs-1)*robot_->configSize(), robot_->configSize()));
           }
+          hybridSolver.explicitSolver().solve(stateConfiguration);
+
+          hybridSolver.computeValue<false>(stateConfiguration);
+          hybridSolver.getValue(value);
+        }
+
+      template <int _PB, int _SO>
+        void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsValueJacobian
+        (const vector_t x, Splines_t& splines, vector_t& value, matrix_t& jacobian,
+         const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const
+        {
+          getFullSplines(x, splines, linearConstraints, hybridSolver);
+          vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
+          stateConfiguration.setZero();
+          for (std::size_t i = 0; i < splines.size(); ++i) {
+            splines[i]->at (splines[i]->timeRange().first,
+            stateConfiguration.segment(
+                i*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+            splines[i]->at (splines[i]->timeRange().second,
+            stateConfiguration.segment(
+                ((i+1)*Spline::NbCoeffs-1)*robot_->configSize(), robot_->configSize()));
+          }
+          hybridSolver.explicitSolver().solve(stateConfiguration);
+
+          hybridSolver.computeValue<true>(stateConfiguration);
+          hybridSolver.updateJacobian(stateConfiguration);
+          hybridSolver.getValue(value);
+          hybridSolver.getReducedJacobian(jacobian);
         }
 
       template <int _PB, int _SO>
@@ -1172,13 +1153,20 @@ namespace hpp {
           LinearConstraint continuityConstraints (nDers, 0);
           SplineOptimizationDatas_t solvers (splines.size(), SplineOptimizationData(rDof));
           this->addContinuityConstraints (splines, orderContinuity, solvers, continuityConstraints);
+
+          matrix_t tmpA(continuityConstraints.b.size(), continuityConstraints.J.cols()+1);
+          tmpA.leftCols(continuityConstraints.J.cols()) = continuityConstraints.J;
+          tmpA.rightCols(1) = continuityConstraints.b;
           hppDout(info, continuityConstraints.b.transpose());
+          hppDout(info, "\n" << tmpA);
 
           HybridSolver hybridSolver(nArgs, nDers);
 
           std::vector<size_type> dofPerSpline(splines.size(), rDof);
+          std::vector<size_type> argPerSpline(splines.size(), robot_->configSize());
           LinearConstraint linearConstraints(nDers, 0);
-          addProblemConstraints(splines, hybridSolver, linearConstraints, dofPerSpline);
+          size_type nbConstraints = 0;
+          addProblemConstraints(splines, hybridSolver, linearConstraints, dofPerSpline, argPerSpline, nbConstraints);
 
           processContinuityConstraints(splines, hybridSolver, continuityConstraints, linearConstraints);
 
@@ -1188,12 +1176,14 @@ namespace hpp {
           vector_t freeParameters = hybridSolver.explicitSolver().freeDers().transpose().rview(fullParameters);
 
           linearConstraints.decompose();
+          hppDout(info, linearConstraints.b.size());
+          hppDout(info, linearConstraints.rank);
           vector_t reducedParameters = linearConstraints.PK.transpose() * (freeParameters - linearConstraints.xStar);
 
           // 3
-          // Cost value is: 1/2 x^T cost x, where x = reducedParameters
-          // Cost gradient is: cost x, where x = reducedParameters
-          matrix_t cost = costMatrix(splines, linearConstraints, dofPerSpline);
+          // Cost value is: 1/2 x^T * cost * x, where x = reducedParameters
+          // Cost gradient is: cost * x, where x = reducedParameters
+          matrix_t cost = costHessian(splines, linearConstraints, dofPerSpline);
 
           LinearConstraint boundConstraint (nParameters * rDof, 0);
           if (checkJointBound) {
@@ -1206,8 +1196,35 @@ namespace hpp {
               throw std::invalid_argument("Input path contains a collision");
           }
 
+          vector_t value(nbConstraints);
+          matrix_t jacobian(nbConstraints, freeParameters.size());
           while (!this->interrupt_)
           {
+            getConstraintsValueJacobian(reducedParameters, splines, value, jacobian, linearConstraints, hybridSolver);
+            matrix_t reducedJacobian = jacobian * linearConstraints.PK;
+
+            matrix_t finiteDiffJacobian(nbConstraints, reducedParameters.size());
+            finiteDiffJacobian.setZero();
+            vector_t dx(reducedParameters.size());
+            dx.setZero();
+            vector_t tmpValue(nbConstraints);
+            for (std::size_t i = 0; i < dx.size(); ++i)
+            {
+              value_type step = .00001;
+              dx[i] = step;
+              getConstraintsValue(reducedParameters+dx, splines, tmpValue, linearConstraints, hybridSolver);
+              getConstraintsValue(reducedParameters-dx, splines, value, linearConstraints, hybridSolver);
+
+              finiteDiffJacobian.col(i) = (tmpValue-value)/(2*step);
+              dx[i] = 0;
+            }
+            hppDout(info, "jacobian\n" << reducedJacobian);
+            hppDout(info, "finitediff\n" << finiteDiffJacobian);
+            matrix_t M = reducedJacobian - finiteDiffJacobian;
+            M = (M.array().abs() < 1e-6).select(0, M);
+            hppDout(info, "diff\n" << M);
+
+            hppDout(info, (reducedJacobian - finiteDiffJacobian).norm());
             break;
             // Get constraints jacobian
             // Compare result with finite differences

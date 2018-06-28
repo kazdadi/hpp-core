@@ -297,6 +297,7 @@ namespace hpp {
       void impl_compute (LiegroupElement& result, vectorIn_t argument) const
       {
         using Eigen::MatrixBlocks;
+        hppDout(info, name());
         hppDout (info, "argument=" << argument.transpose ());
         // Store q_{output} in result
         qOut_.vector () = outputConfIntervals_.rview (argument);

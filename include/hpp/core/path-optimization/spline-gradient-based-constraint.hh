@@ -82,12 +82,13 @@ namespace hpp {
 
           virtual void addProblemConstraints (const Splines_t splines,
               HybridSolver& hybridSolver, LinearConstraint& constraint,
-              std::vector<size_type>& dofPerSpline) const;
+              std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
+              size_type& nbConstraints) const;
 
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
 
-          matrix_t costMatrix(const Splines_t splines, const LinearConstraint linearConstraints,
+          matrix_t costHessian(const Splines_t splines, const LinearConstraint linearConstraints,
               std::vector<size_type> dofPerSpline) const;
 
             void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
@@ -136,8 +137,11 @@ namespace hpp {
           void getFullSplines (const vector_t reducedParams,
               Splines_t& fullSplines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
 
-          void getValueJacobianReduced (const Splines_t fullSplines, const vector_t reducedParams,
-              vector_t& value, matrix_t& jacobian, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
+          void getConstraintsValue(const vector_t x, Splines_t& splines, vector_t& value,
+              const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
+
+          void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vector_t& value,
+              matrix_t& jacobian, const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
