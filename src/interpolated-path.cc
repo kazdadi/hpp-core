@@ -16,6 +16,8 @@
 
 #include <hpp/core/interpolated-path.hh>
 
+#include <pinocchio/multibody/liegroup/liegroup.hpp>
+
 #include <hpp/util/debug.hh>
 
 #include <hpp/pinocchio/device.hh>
@@ -144,7 +146,7 @@ namespace hpp {
       const value_type T = itA->first - itB->first;
       const value_type u = (param - itB->first) / T;
 
-      pinocchio::interpolate<hpp::pinocchio::LieGroupTpl> (device_, itB->second, itA->second, u, result);
+      pinocchio::interpolate<se3::LieGroupTpl> (device_, itB->second, itA->second, u, result);
       return true;
     }
 

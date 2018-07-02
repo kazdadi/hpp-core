@@ -18,6 +18,8 @@
 
 #include <hpp/core/straight-path.hh>
 
+#include <pinocchio/multibody/liegroup/liegroup.hpp>
+
 #include <hpp/util/debug.hh>
 
 #include <hpp/pinocchio/device.hh>
@@ -84,7 +86,7 @@ namespace hpp {
       }
       value_type u = (param - paramRange().first) / L;
       if (L == 0) u = 0;
-      pinocchio::interpolate<hpp::pinocchio::LieGroupTpl> (device_, initial_, end_, u, result);
+      pinocchio::interpolate<se3::LieGroupTpl> (device_, initial_, end_, u, result);
       return true;
     }
 

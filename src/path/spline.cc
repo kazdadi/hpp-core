@@ -16,6 +16,8 @@
 
 # include <hpp/core/path/spline.hh>
 
+#include <pinocchio/multibody/liegroup/liegroup.hpp>
+
 #include <hpp/pinocchio/configuration.hh>
 #include <hpp/pinocchio/liegroup.hh>
 
@@ -333,7 +335,7 @@ namespace hpp {
         basisFunctionDerivative(0, u, basisFunc);
         velocity_.noalias() = parameters_.transpose() * basisFunc;
 
-        pinocchio::integrate<false, hpp::pinocchio::LieGroupTpl> (robot_, base_, velocity_, res);
+        pinocchio::integrate<false, se3::LieGroupTpl> (robot_, base_, velocity_, res);
         return true;
       }
 
