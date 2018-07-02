@@ -18,6 +18,7 @@
 #include <hpp/core/fwd.hh>
 #include <hpp/util/indent.hh>
 #include <hpp/core/numerical-constraint.hh>
+#include <hpp/util/debug.hh>
 
 namespace hpp {
   namespace core {
