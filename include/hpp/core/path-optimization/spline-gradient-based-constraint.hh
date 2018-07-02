@@ -88,6 +88,8 @@ namespace hpp {
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
 
+          LiegroupSpacePtr_t createProblemLieGroup(const Splines_t splines, const HybridSolver hybridSolver) const;
+
           matrix_t costHessian(const Splines_t splines, const LinearConstraint linearConstraints,
               std::vector<size_type> dofPerSpline) const;
 
@@ -141,7 +143,8 @@ namespace hpp {
               const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
 
           void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vector_t& value,
-              matrix_t& jacobian, const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
+              matrix_t& jacobian, const LinearConstraint linearConstraints,
+              HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
