@@ -75,8 +75,8 @@ namespace hpp {
         ConstraintMatrix_t coeffs (nbConstraints, SplineOrder+1);
         RhsMatrix_t rhs (nbConstraints, device_.lock()->numberDof());
 
-        p->base(q1); // TODO use the center ?
-        // p->base(device_.lock()->neutralConfiguration()); // TODO use the center ?
+        // p->base(q1); // TODO use the center ?
+        p->base(device_.lock()->neutralConfiguration()); // TODO use the center ?
         // Configuration_t qmiddle (q1.size());
         // pinocchio::interpolate<hpp::pinocchio::LieGroupTpl>(device_.lock(), q1, q2, 0.5, qmiddle);
         // p->base(qmiddle);
