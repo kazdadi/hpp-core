@@ -90,8 +90,8 @@ namespace hpp {
 
           LiegroupSpacePtr_t createProblemLieGroup(const Splines_t splines, const HybridSolver hybridSolver) const;
 
-          matrix_t costHessian(const Splines_t splines, const LinearConstraint linearConstraints,
-              std::vector<size_type> dofPerSpline) const;
+          void costFunction (const Splines_t splines, const LinearConstraint& linearConstraints,
+              std::vector<size_type> dofPerSpline, matrix_t& hessian, vector_t& gradientAtZero, value_type& valueAtZero) const;
 
             void addProblemConstraintOnPath (const PathPtr_t& path, const size_type& idxSpline, const SplinePtr_t& spline, LinearConstraint& lc, SplineOptimizationData& sod) const;
 
