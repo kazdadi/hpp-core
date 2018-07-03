@@ -139,12 +139,16 @@ namespace hpp {
           void getFullSplines (const vector_t reducedParams,
               Splines_t& fullSplines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
 
-          void getConstraintsValue(const vector_t x, Splines_t& splines, vector_t& value,
+          void getConstraintsValue(const vector_t x, Splines_t& splines, vectorOut_t value,
               const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
 
-          void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vector_t& value,
-              matrix_t& jacobian, const LinearConstraint linearConstraints,
+          void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vectorOut_t value,
+              matrixOut_t jacobian, const LinearConstraint linearConstraints,
               HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace) const;
+
+          void getConstraintsHessian (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
+         const value_type stepSize, const LinearConstraint& linearConstraints, HybridSolver& hybridSolver,
+         const LiegroupSpacePtr_t stateSpace, size_type nbConstraints) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,

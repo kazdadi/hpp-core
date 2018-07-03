@@ -118,7 +118,7 @@ namespace hpp {
               for (std::size_t j = 0; j < numericalConstraints.size(); ++j)
               {
                 // TODO: Mixed comparison type constraints
-                bool equalToZero = numericalConstraints[j]->comparisonType()[0] == constraints::Equality;
+                bool equalToZero = numericalConstraints[j]->comparisonType()[0] == constraints::EqualToZero;
 
                 ExplicitNumericalConstraintPtr_t explicitConstraint =
                   HPP_DYNAMIC_PTR_CAST (ExplicitNumericalConstraint, numericalConstraints[j]);
@@ -192,28 +192,34 @@ namespace hpp {
                 else
                 {
                   NumericalConstraintPtr_t numericalConstraint = numericalConstraints[j];
-                  segment_t inArgs;
-                  segment_t inDers;
-                  inArgs.second = robot_->configSize();
-                  inDers.second = robot_->numberDof();
-                  if (i >= 1 and (!configProjectorPrev or !(configProjectorPrev->contains(numericalConstraint))))
+                  if (equalToZero)
                   {
-                    inArgs.first = robot_->configSize()*Spline::NbCoeffs*i;
-                    inDers.first = robot_->numberDof() *Spline::NbCoeffs*i;
-                    StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
-                          nArgs, nDers, inArgs, inDers));
-                    // TODO Priority?
-                    hybridSolver.add(initialNumericalconstraint, 0, numericalConstraint->comparisonType());
-                    nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                    segment_t inArgs;
+                    segment_t inDers;
+                    inArgs.second = robot_->configSize();
+                    inDers.second = robot_->numberDof();
+                    if (i >= 1 and (!configProjectorPrev or !(configProjectorPrev->contains(numericalConstraint))))
+                    {
+                      inArgs.first = robot_->configSize()*Spline::NbCoeffs*i;
+                      inDers.first = robot_->numberDof() *Spline::NbCoeffs*i;
+                      StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
+                            nArgs, nDers, inArgs, inDers));
+                      hybridSolver.add(initialNumericalconstraint, 0, numericalConstraint->comparisonType());
+                      nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                    }
+                    if (i <= splines.size() - 2)
+                    {
+                      inArgs.first = robot_->configSize() * (Spline::NbCoeffs*(i+1) - 1);
+                      inDers.first = robot_->numberDof() * (Spline::NbCoeffs*(i+1) - 1);
+                      StateFunction::Ptr_t endNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
+                            nArgs, nDers, inArgs, inDers));
+                      hybridSolver.add(endNumericalconstraint, 0, numericalConstraint->comparisonType());
+                      nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                    }
                   }
-                  if (i <= splines.size() - 2)
+                  else
                   {
-                    inArgs.first = robot_->configSize() * (Spline::NbCoeffs*(i+1) - 1);
-                    inDers.first = robot_->numberDof() * (Spline::NbCoeffs*(i+1) - 1);
-                    StateFunction::Ptr_t endNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
-                          nArgs, nDers, inArgs, inDers));
-                    hybridSolver.add(endNumericalconstraint, 0, numericalConstraint->comparisonType());
-                    nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                    // TODO: Equality (mixed?) type constraints
                   }
                 }
               }
@@ -498,78 +504,8 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::getHessianFiniteDiff
-        (Splines_t fullSplines, const vector_t reducedParams,
-         std::vector<matrix_t>& hessianStack, value_type stepSize,
-         LinearConstraint constraint) const
-        {
-          const std::size_t nParameters = fullSplines.size() * Spline::NbCoeffs;
-          const std::size_t rDof = robot_->numberDof();
-          const std::size_t dim = nParameters * rDof;
-
-          vector_t x = constraint.xStar + constraint.PK*reducedParams;
-          vector_t step(rDof*Spline::NbCoeffs);
-          step.setZero();
-          Splines_t splinesPlus;
-          Splines_t splinesMinus;
-          Base::copy(fullSplines, splinesPlus);
-          Base::copy(fullSplines, splinesMinus);
-          for (std::size_t j = 0; j < rDof; ++j)
-          {
-            std::size_t constraintIndex = 0;
-            step[j] = stepSize;
-
-            for (std::size_t i = 1; i < fullSplines.size(); ++i)
-            {
-              ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
-              if (configProj)
-              {
-                std::size_t numberOfConstraints = configProj->dimension();
-
-                vector_t paramsPlus = x.segment (i*rDof*Spline::NbCoeffs,
-                    rDof*Spline::NbCoeffs) + step;
-                vector_t paramsMinus = x.segment (i*rDof*Spline::NbCoeffs,
-                    rDof*Spline::NbCoeffs) - step;
-
-                splinesPlus[i]->rowParameters(paramsPlus);
-                splinesMinus[i]->rowParameters(paramsMinus);
-
-                Configuration_t initial_plus = splinesPlus[i]->initial();
-                Configuration_t initial_minus = splinesMinus[i]->initial();
-
-                vector_t tmp_value(numberOfConstraints);
-
-                matrix_t J_plus(numberOfConstraints, configProj->numberNonLockedDof());
-                matrix_t J_minus(numberOfConstraints, configProj->numberNonLockedDof());
-                matrix_t jacPlus(numberOfConstraints, rDof);
-                matrix_t jacMinus(numberOfConstraints, rDof);
-                jacPlus.setZero();
-                jacMinus.setZero();
-
-                configProj->computeValueAndJacobian(initial_plus, tmp_value, J_plus);
-                configProj->computeValueAndJacobian(initial_minus, tmp_value, J_minus);
-
-                configProj->solver().explicitSolver().freeDers().lview(jacPlus) = J_plus;
-                configProj->solver().explicitSolver().freeDers().lview(jacMinus) = J_minus;
-
-                matrix_t jacDiff(numberOfConstraints, rDof);
-                jacDiff = (jacPlus - jacMinus)/(2*stepSize);
-
-                for (std::size_t k = 0; k < numberOfConstraints; ++k)
-                {
-                  hessianStack[constraintIndex+k].row(j).
-                    segment(rDof*Spline::NbCoeffs*i, rDof) = jacDiff.row(k);
-                }
-                constraintIndex += numberOfConstraints;
-              }
-            }
-            step[j] = 0;
-          }
-        }
-
-      template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsValue
-        (const vector_t x, Splines_t& splines, vector_t& value,
+        (const vector_t x, Splines_t& splines, vectorOut_t value,
          const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const
         {
           getFullSplines(x, splines, linearConstraints, hybridSolver);
@@ -592,7 +528,7 @@ namespace hpp {
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsValueJacobian
-        (const vector_t x, Splines_t& splines, vector_t& value, matrix_t& jacobian,
+        (const vector_t x, Splines_t& splines, vectorOut_t value, matrixOut_t jacobian,
          const LinearConstraint linearConstraints, HybridSolver& hybridSolver,
          const LiegroupSpacePtr_t stateSpace) const
         {
@@ -611,8 +547,8 @@ namespace hpp {
           }
           for (std::size_t i = 0; i < splines.size(); ++i) {
             for (std::size_t j = 0; j < Spline::NbCoeffs; ++j)
-              baseConfiguration.segment(i*Spline::NbCoeffs*robot_->configSize() + j*robot_->configSize(), robot_->configSize())
-                = splines[i]->base();
+              baseConfiguration.segment(i*Spline::NbCoeffs*robot_->configSize()
+                  + j*robot_->configSize(), robot_->configSize()) = splines[i]->base();
           }
 
           LiegroupElement freeStateConfiguration (stateSpace);
@@ -626,8 +562,7 @@ namespace hpp {
 
           matrix_t J = matrix_t::Identity(stateSpace->nv(), stateSpace->nv());
           matrix_t J3 = matrix_t::Identity(stateSpace->nv(), stateSpace->nv());
-          // TODO: Multiply jacobian directly with dIntegrate_dv?
-          // TODO: Change dIntegrate to multiply on the right
+          // TODO: add option to multiply on the right to dIntegrate
           // TODO: dIntegrate_dv doesn't depend on q?
           LiegroupElement baseElement(hybridSolver.explicitSolver().freeArgs().rview(baseConfiguration), stateSpace);
           stateSpace->dIntegrate_dv(baseElement, linearConstraints.xStar + linearConstraints.PK * x, J);
@@ -635,167 +570,34 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::addCollisionConstraintsValueJacobian
-        (const Splines_t fullSplines, const vector_t reducedParams,
-         vector_t& value, matrix_t& jacobian, LinearConstraint constraint,
-         std::vector<DifferentiableFunctionPtr_t> collFunctions,
-         std::vector<value_type> collValues,
-         std::vector<std::size_t> indices,
-         std::vector<value_type> times) const
+        void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsHessian
+        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
+         const value_type stepSize, const LinearConstraint& linearConstraints, HybridSolver& hybridSolver,
+         const LiegroupSpacePtr_t stateSpace, size_type nbConstraints) const
         {
-          std::size_t row = value.size();
-          value.conservativeResize(row + collFunctions.size());
-          jacobian.conservativeResize(row + collFunctions.size(), Eigen::NoChange);
-          for (std::size_t i = 0; i < collFunctions.size(); ++i)
+          // TODO: Optimize
+          matrix_t jacobianPlus (hessianStack.size(), linearConstraints.J.cols());
+          matrix_t jacobianMinus (hessianStack.size(), linearConstraints.J.cols());
+          matrix_t reducedJacobianDiff (hessianStack.size(), x.size());
+          vector_t step (x.size());
+          vector_t tmpValue (hessianStack.size());
+          step.setZero();
+          for (std::size_t i = 0; i < x.size(); ++i)
           {
-            size_type rDof = robot_->numberDof();
-
-            vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
-            matrix_t splinesJacobian(rDof, fullSplines.size()*Spline::NbCoeffs*rDof);
-            fullSplines[indices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, times[i]);
-            splinesJacobian.setZero();
-            for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j)
-            {
-              splinesJacobian.block(0, Spline::NbCoeffs*rDof*indices[i] + rDof*j,
-                  rDof, rDof) = BernsteinCoeffs[j] * matrix_t::Identity(rDof, rDof);
+            step[i] = stepSize;
+            getConstraintsValueJacobian (x + step, splines, tmpValue.topRows(nbConstraints),
+                jacobianPlus.topRows(nbConstraints), linearConstraints, hybridSolver, stateSpace);
+            getConstraintsValueJacobian (x - step, splines, tmpValue.topRows(nbConstraints),
+                jacobianMinus.topRows(nbConstraints), linearConstraints, hybridSolver, stateSpace);
+            reducedJacobianDiff = (jacobianPlus - jacobianMinus)*linearConstraints.PK /(2*stepSize);
+            // TODO: Collision jacobians
+            step[i] = 0;
+            for (std::size_t k = 0; k < hessianStack.size(); ++k) {
+              hessianStack[k].row(i) = reducedJacobianDiff.row(k);
             }
-
-            vector_t currentConfig(collFunctions[i]->inputSize());
-            matrix_t collJacobian(1, collFunctions[i]->inputDerivativeSize());
-            (*(fullSplines[indices[i]])) (currentConfig, times[i]);
-            value[row] = (((*(collFunctions[i])) (currentConfig)).vector()[0] - collValues[i]);
-            collFunctions[i]->jacobian(collJacobian, currentConfig);
-            jacobian.row(row) = (collJacobian*splinesJacobian)*constraint.PK;
-            ++row;
           }
         }
 
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::addCollisionHessianFiniteDiff
-        (const Splines_t fullSplines, const vector_t reducedParams,
-         std::vector<matrix_t>& hessianStack, LinearConstraint constraint,
-         std::vector<DifferentiableFunctionPtr_t> collFunctions,
-         std::vector<value_type> collValues, std::vector<std::size_t> indices,
-         std::vector<value_type> times, value_type stepSize, std::size_t nbConstraints) const
-        {
-          const std::size_t rDof = robot_->numberDof();
-          std::size_t row = nbConstraints;
-
-          Splines_t splinesPlus;
-          Splines_t splinesMinus;
-          Base::copy(fullSplines, splinesPlus);
-          Base::copy(fullSplines, splinesMinus);
-
-          for (std::size_t i = 0; i < collFunctions.size(); ++i)
-          {
-            vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
-            matrix_t splinesJacobian(rDof, fullSplines.size()*Spline::NbCoeffs*rDof);
-            fullSplines[indices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, times[i]);
-            splinesJacobian.setZero();
-
-            for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j)
-            {
-              splinesJacobian.block(0, Spline::NbCoeffs*rDof*indices[i] + rDof*j,
-                  rDof, rDof) = BernsteinCoeffs[j] * matrix_t::Identity(rDof, rDof);
-            }
-
-            matrix_t collHessian(collFunctions[i]->inputDerivativeSize(),
-                collFunctions[i]->inputDerivativeSize());
-
-            vector_t step(Spline::NbCoeffs * rDof);
-            vector_t x = fullSplines[indices[i]]->rowParameters();
-            for (std::size_t j = 0; j < rDof; ++j)
-            {
-              step.setZero();
-              for (std::size_t k = 0; k < Spline::NbCoeffs; ++k) {
-                step[j + k*rDof] = stepSize;
-              }
-              splinesPlus[indices[i]]->rowParameters(x + step);
-              splinesMinus[indices[i]]->rowParameters(x - step);
-
-              vector_t configPlus(collFunctions[i]->inputSize());
-              vector_t configMinus(collFunctions[i]->inputSize());
-
-              (*(splinesPlus[indices[i]])) (configPlus, times[i]);
-              (*(splinesMinus[indices[i]])) (configMinus, times[i]);
-
-              matrix_t collJacobianPlus(1, collFunctions[i]->inputDerivativeSize());
-              matrix_t collJacobianMinus(1, collFunctions[i]->inputDerivativeSize());
-
-              collFunctions[i]->jacobian(collJacobianPlus, configPlus);
-              collFunctions[i]->jacobian(collJacobianMinus, configMinus);
-
-              collHessian.row(j) = (collJacobianPlus - collJacobianMinus)/(2*stepSize);
-            }
-
-            hessianStack[row] = splinesJacobian.transpose() * collHessian * splinesJacobian;
-            ++row;
-          }
-        }
-
-      template <int _PB, int _SO>
-        bool SplineGradientBasedConstraint<_PB, _SO>::validateConstraints
-        (const Splines_t fullSplines, const vector_t value,
-         const std::vector<value_type> collValues,
-         LinearConstraint constraint, value_type factor) const
-        {
-          // TODO: Return max ratio of error over threshold
-          std::size_t row = 0;
-          for (std::size_t i = 1; i < fullSplines.size(); ++i)
-          {
-            ConfigProjectorPtr_t configProj = fullSplines[i]->constraints()->configProjector();
-            if (configProj)
-            {
-              std::size_t numberOfConstraints = configProj->dimension();
-              if (value.segment(row, numberOfConstraints).norm() > factor * configProj->errorThreshold())
-              {
-                return false;
-              }
-              row += numberOfConstraints;
-            }
-          }
-          for (std::size_t i = 0; i < collValues.size(); ++i)
-          {
-            if (std::abs(value[row]) > factor * collValues[i]*0.01) return false;
-            ++row;
-          }
-          return true;
-        }
-
-      template <int _PB, int _SO>
-        vector_t SplineGradientBasedConstraint<_PB, _SO>::getSecondOrderCorrection
-        (const vector_t step, const matrix_t jacobian, const std::vector<matrix_t> hessianStack,
-         const matrix_t inverseGram, const matrix_t PK) const
-        {
-          vector_t secondOrderCorrection(step.size());
-          secondOrderCorrection.setZero();
-          for (std::size_t j = 0; j < inverseGram.rows(); ++j)
-          {
-            vector_t v_j(step.size());
-            v_j.setZero();
-            for (std::size_t i = 0; i < inverseGram.rows(); ++i)
-            {
-              v_j += inverseGram.coeff(i, j) * jacobian.row(i);
-            }
-            secondOrderCorrection += 0.5*
-              (step.transpose() * (PK.transpose() * (hessianStack[j] * (PK * step))))
-              .coeff(0, 0) * v_j;
-          }
-          return secondOrderCorrection;
-        }
-
-      template <int _PB, int _SO>
-        void SplineGradientBasedConstraint<_PB, _SO>::analyzeHessians
-        (const std::vector<matrix_t> hessianStack, const matrix_t PK) const
-        {
-          matrix_t restrictedHessian(PK.cols(), PK.cols());
-          for (std::size_t i = 0; i < hessianStack.size(); ++i)
-          {
-            restrictedHessian = PK.transpose() * hessianStack[i] * PK;
-            Eigen::SelfAdjointEigenSolver<matrix_t> solver(restrictedHessian);
-            hppDout(info, solver.eigenvalues().transpose());
-          }
-        }
       // ----------- Optimize ----------------------------------------------- //
 
       template <int _PB, int _SO>
@@ -807,8 +609,10 @@ namespace hpp {
               "SplineGradientBasedConstraint/checkJointBound", true);
           bool checkCollisions = problem().getParameter(
               "SplineGradientBasedConstraint/checkCollisions", true);
-          value_type alpha = problem().getParameter(
-              "SplineGradientBasedConstraint/alpha", .1);
+          value_type stepSize = problem().getParameter(
+              "SplineGradientBasedConstraint/stepSize", 1e-7);
+          value_type trustRadius = problem().getParameter(
+              "SplineGradientBasedConstraint/trustRadius", .5);
 
           PathVectorPtr_t tmp = PathVector::create (robot_->configSize(), robot_->numberDof());
           path->flatten(tmp);
@@ -878,14 +682,20 @@ namespace hpp {
 
           vector_t value(nbConstraints);
           matrix_t jacobian(nbConstraints, freeParameters.size());
-          matrix_t reducedJacobian;
+          matrix_t reducedJacobian(nbConstraints, reducedParameters.size());
+
+          matrix_t zeroMatrix(reducedParameters.size(), reducedParameters.size());
+          zeroMatrix.setZero();
+          std::vector<matrix_t> hessianStack(nbConstraints, zeroMatrix);
+          matrix_t hessian(reducedParameters.size(), reducedParameters.size());
+
           size_type nbIterations = 0;
           while (!this->interrupt_)
           {
             if (++nbIterations > maxIterations) break;
             // Get constraints jacobian
-            getConstraintsValueJacobian(reducedParameters, splines, value,
-                jacobian, linearConstraints, hybridSolver, stateSpace);
+            getConstraintsValueJacobian(reducedParameters, splines, value.topRows(nbConstraints),
+                jacobian.topRows(nbConstraints), linearConstraints, hybridSolver, stateSpace);
             reducedJacobian = jacobian * linearConstraints.PK;
 
             hppDout(info, "Iteration: " << nbIterations);
@@ -895,6 +705,8 @@ namespace hpp {
             // Correct constraints error
             vector_t correction = reducedJacobian.colPivHouseholderQr().solve(-value);
             reducedParameters += correction;
+
+            bool optimumReached = false;
             if (value.norm() < 1e-5)
             {
               LinearConstraint jacobianConstraint (reducedJacobian.cols(), reducedJacobian.rows());
@@ -902,10 +714,44 @@ namespace hpp {
               jacobianConstraint.b.setZero();
               jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
-              vector_t projectedGradient = jacobianConstraint.PK * (jacobianConstraint.PK.transpose() * gradient);
-              vector_t tmpValue(nbConstraints);
-              getConstraintsValue(reducedParameters, splines, value, linearConstraints, hybridSolver);
-              reducedParameters += -alpha * gradient;
+
+              hppDout(info, "Getting hessians...");
+              getConstraintsHessian(reducedParameters, splines, hessianStack, stepSize,
+                  linearConstraints, hybridSolver, stateSpace, nbConstraints);
+              hppDout(info, "Done!");
+
+              Eigen::JacobiSVD<matrix_t> svd(reducedJacobian.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
+              hppDout(info, svd.singularValues().transpose().reverse());
+              vector_t pseudoInverse = svd.singularValues().cwiseInverse().cwiseAbs2();
+
+              for (std::size_t i = 0; i < svd.singularValues().size(); ++i)
+              {
+                if (svd.singularValues()[i] < std::pow(10, -8))
+                {
+                  pseudoInverse[i] = 0;
+                  vector_t linearRelation = svd.matrixV().col(i);
+                  hppDout(info, "Linear dependence " << linearRelation.transpose());
+                }
+              }
+
+              matrix_t inverseGram = svd.matrixV() * pseudoInverse.asDiagonal() * svd.matrixV().transpose();
+              hessian = costQuadratic;
+              for (std::size_t i = 0; i < hessianStack.size(); ++i)
+              {
+                value_type coeff = 0;
+                for (std::size_t j = 0; j < hessianStack.size(); ++j) {
+                  coeff += gradient.dot(reducedJacobian.row(i)) * inverseGram.coeff(i, j);
+                }
+                hessian -= coeff * hessianStack[i];
+              }
+              matrix_t projectedHessian = jacobianConstraint.PK.transpose() * hessian * jacobianConstraint.PK;
+              vector_t firstOrderStep = solveQP(projectedHessian,
+                  -jacobianConstraint.PK.transpose() * gradient, trustRadius);
+              hppDout(info, "Step " << firstOrderStep.transpose());
+              hppDout(info, firstOrderStep.norm());
+              reducedParameters += jacobianConstraint.PK * firstOrderStep;
+              hppDout(info, "Cost: " << .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
+                    + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             }
             // Get constraints hessians
             // Add jacobian correction term?
