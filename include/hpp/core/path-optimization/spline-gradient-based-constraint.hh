@@ -83,12 +83,13 @@ namespace hpp {
           virtual void addProblemConstraints (const Splines_t splines,
               HybridSolver& hybridSolver, LinearConstraint& constraint,
               std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
-              size_type& nbConstraints) const;
+              size_type& nbConstraints, std::vector<size_type>& constraintSplineIndex) const;
 
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
 
-          LiegroupSpacePtr_t createProblemLieGroup(const Splines_t splines, const HybridSolver hybridSolver) const;
+          LiegroupSpacePtr_t createProblemLieGroup(std::vector<LiegroupSpacePtr_t>& splineSpaces,
+              const Splines_t splines, const HybridSolver hybridSolver) const;
 
           void costFunction (const Splines_t splines, const LinearConstraint& linearConstraints,
               std::vector<size_type> dofPerSpline, matrix_t& hessian, vector_t& gradientAtZero, value_type& valueAtZero) const;
@@ -132,23 +133,28 @@ namespace hpp {
           /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
           vector_t solveQP(matrix_t A, vector_t b, value_type r) const;
 
-          void getHessianFiniteDiff (const Splines_t fullSplines, const vector_t x,
-              std::vector<matrix_t>& hessianStack, value_type stepSize,
-              LinearConstraint constraint) const;
+          void getHessianFiniteDiff (const vector_t x, Splines_t& splines,
+              std::vector<matrix_t>& hessianStack, const value_type stepSize, HybridSolver& hybridSolver,
+              const std::vector<size_type>& dofPerSpline, const size_type nbConstraints,
+              const LiegroupSpacePtr_t stateSpace) const;
 
-          void getFullSplines (const vector_t reducedParams,
-              Splines_t& fullSplines, LinearConstraint linearConstraints, HybridSolver hybridSolver) const;
+          void getFullSplines (const vector_t reducedParams, Splines_t& fullSplines,
+              HybridSolver hybridSolver) const;
 
           void getConstraintsValue(const vector_t x, Splines_t& splines, vectorOut_t value,
-              const LinearConstraint linearConstraints, HybridSolver& hybridSolver) const;
+              HybridSolver& hybridSolver) const;
 
           void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vectorOut_t value,
-              matrixOut_t jacobian, const LinearConstraint linearConstraints,
+              matrixOut_t jacobian, const std::vector<size_type>& dofPerSpline,
               HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace) const;
 
           void getConstraintsHessian (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
-         const value_type stepSize, const LinearConstraint& linearConstraints, HybridSolver& hybridSolver,
-         const LiegroupSpacePtr_t stateSpace, size_type nbConstraints) const;
+              const std::vector<size_type>& dofPerSpline, const value_type stepSize,
+              HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
+              const std::vector<size_type>& constraintSplineIndex) const;
+
+          void getJacobianFiniteDiff(const vector_t x, Splines_t& splines, matrixOut_t jacobian,
+              const value_type stepSize, HybridSolver& hybridSolver) const;
 
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
@@ -171,8 +177,8 @@ namespace hpp {
 
           void analyzeHessians (const std::vector<matrix_t> hessianStack, const matrix_t PK) const;
 
-          vector_t getSecondOrderCorrection (const vector_t step, const matrix_t jacobian,
-              const std::vector<matrix_t> hessianStack, const matrix_t inverseGram, const matrix_t PK) const;
+          vector_t getSecondOrderCorrection (const vector_t step, const matrix_t& jacobian,
+              const std::vector<matrix_t>& hessianStack, const matrix_t& inverseGram, const matrix_t& PK) const;
 
           /// \todo static
           void copy (const Splines_t& in, Splines_t& out) const;
