@@ -156,6 +156,10 @@ namespace hpp {
           void getJacobianFiniteDiff(const vector_t x, Splines_t& splines, matrixOut_t jacobian,
               const value_type stepSize, HybridSolver& hybridSolver) const;
 
+          void getHessianDoubleFiniteDiff
+            (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
+             HybridSolver hybridSolver) const;
+
           void addCollisionConstraintsValueJacobian
             (const Splines_t fullSplines, const vector_t reducedParams,
              vector_t& value, matrix_t& jacobian, LinearConstraint constraint,

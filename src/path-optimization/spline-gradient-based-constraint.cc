@@ -599,9 +599,12 @@ namespace hpp {
 
           matrix_t jacobianPlus (hessianStack.size(), x.size());
           matrix_t jacobianMinus (hessianStack.size(), x.size());
+          matrix_t jacobianPlusFinite (hessianStack.size(), x.size());
+          matrix_t jacobianMinusFinite (hessianStack.size(), x.size());
           jacobianPlus.setZero();
           jacobianMinus.setZero();
           matrix_t jacobianDiff (hessianStack.size(), x.size());
+          matrix_t jacobianDiffFinite (hessianStack.size(), x.size());
           vector_t tmpValue (nbConstraints);
           vector_t step(x.size());
           step.setZero();
@@ -621,8 +624,6 @@ namespace hpp {
 
             jacobianDiff = (jacobianPlus - jacobianMinus)/(2*stepSize);
 
-            //hppDout(info, "\n" << jacobianDiff);
-
             for (std::size_t k = 0; k < nbConstraints; ++k)
             {
               if (i < dofPerSpline[constraintSplineIndex[k]]) {
@@ -636,12 +637,6 @@ namespace hpp {
               if (i < dofPerSpline[j]) step[splineIndex[j] + i] = 0;
             }
           }
-          for (std::size_t k = 0; k < nbConstraints; ++k)
-          {
-            //hppDout(info, constraintSplineIndex[k]);
-            //hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
-            //hppDout(info, "Hessian " << k << "\n" << hessianStack[k]);
-          }
         }
 
       template <int _PB, int _SO>
@@ -651,6 +646,7 @@ namespace hpp {
         {
           vector_t value(jacobian.rows());
           vector_t valuePlus(jacobian.rows());
+          vector_t valueMinus(jacobian.rows());
           vector_t fullParameters(hybridSolver.explicitSolver().derSize());
           fullParameters.setZero();
 
@@ -662,7 +658,8 @@ namespace hpp {
           {
             step[i] = stepSize;
             getConstraintsValue(x+step, splines, valuePlus, hybridSolver);
-            jacobian.col(i) = (valuePlus - value)/(stepSize);
+            getConstraintsValue(x-step, splines, valueMinus, hybridSolver);
+            jacobian.col(i) = (valuePlus - valueMinus)/(2*stepSize);
             step[i] = 0;
           }
         }
@@ -701,6 +698,58 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
+        void SplineGradientBasedConstraint<_PB, _SO>::getHessianDoubleFiniteDiff
+        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
+         HybridSolver hybridSolver) const
+        {
+          std::vector<matrix_t> hessianStackCopy;
+          for (std::size_t k = 0; k < hessianStack.size(); ++k)
+          {
+            hessianStackCopy.push_back(hessianStack[k].eval());
+          }
+          vector_t valuePlusPlus(hessianStack.size());
+          vector_t valuePlusMinus(hessianStack.size());
+          vector_t valueMinusPlus(hessianStack.size());
+          vector_t valueMinusMinus(hessianStack.size());
+          vector_t step(x.size());
+          vector_t step2(x.size());
+          step.setZero();
+          step2.setZero();
+          vector_t d2f(hessianStack.size());
+          for (std::size_t i = 68; i < step.size(); ++i)
+          {
+            hppDout(info, i << "|" << step.size());
+            step[i] = stepSize;
+            for (std::size_t j = 0; j < step.size(); ++j)
+            {
+              step2[j] = stepSize;
+              getConstraintsValue(x+step+step2, splines, valuePlusPlus, hybridSolver);
+              getConstraintsValue(x+step-step2, splines, valuePlusMinus, hybridSolver);
+              getConstraintsValue(x-step+step2, splines, valueMinusPlus, hybridSolver);
+              getConstraintsValue(x-step-step2, splines, valueMinusMinus, hybridSolver);
+              d2f = (valuePlusPlus - valuePlusMinus - valueMinusPlus + valueMinusMinus)/(4*stepSize*stepSize);
+              for (std::size_t k = 0; k < hessianStack.size(); ++k)
+              {
+                if (hessianStack[k](i,j) - d2f[k] > 1e-5) {
+                  hppDout(info, i << " " << j << " " << k);
+                  hppDout(info, hessianStackCopy[k](i,j));
+                  hppDout(info, hessianStackCopy[k](i,j) << " " << d2f[k]);
+                }
+                hessianStack[k](i,j) = d2f[k];
+              }
+              step2[j] = 0;
+            }
+            step[i] = 0;
+          }
+          for (std::size_t k = 0; k < hessianStack.size(); ++k)
+          {
+            hppDout(info, (hessianStack[k] - hessianStackCopy[k]).norm());
+            hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
+            hppDout(info, (hessianStackCopy[k] - hessianStackCopy[k].transpose()).norm());
+          }
+        }
+
+      template <int _PB, int _SO>
         vector_t SplineGradientBasedConstraint<_PB, _SO>::getSecondOrderCorrection
         (const vector_t step, const matrix_t& jacobian, const std::vector<matrix_t>& hessianStack,
          const matrix_t& inverseGram, const matrix_t& PK) const
@@ -734,7 +783,7 @@ namespace hpp {
           bool checkCollisions = problem().getParameter(
               "SplineGradientBasedConstraint/checkCollisions", true);
           value_type stepSize = problem().getParameter(
-              "SplineGradientBasedConstraint/stepSize", 1e-7);
+              "SplineGradientBasedConstraint/stepSize", 1e-2);
           value_type trustRadius = problem().getParameter(
               "SplineGradientBasedConstraint/trustRadius", .5);
 
@@ -831,8 +880,8 @@ namespace hpp {
                 jacobian.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
 
             matrix_t finiteDiffJacobian (nbConstraints, freeParameters.size());
-            getJacobianFiniteDiff (freeParameters, splines, finiteDiffJacobian, stepSize, hybridSolver);
-            hppDout(info, (jacobian - finiteDiffJacobian).norm());
+            //getJacobianFiniteDiff (freeParameters, splines, finiteDiffJacobian, stepSize, hybridSolver);
+            //hppDout(info, (jacobian - finiteDiffJacobian).norm());
 
             reducedJacobian = jacobian * linearConstraints.PK;
 
@@ -852,13 +901,22 @@ namespace hpp {
               jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
 
-              hppDout(info, jacobian);
               hppDout(info, "Getting hessians...");
               freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
-              //getHessianFiniteDiff(freeParameters, splines, hessianStack, stepSize,
-                  //hybridSolver, dofPerSpline, nbConstraints, stateSpace);
               getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline, stepSize,
                   hybridSolver, stateSpace, nbConstraints, constraintSplineIndex);
+              for (std::size_t k = 0; k < hessianStack.size(); ++k)
+              {
+                if ((hessianStack[k] - hessianStack[k].transpose()).norm() > .001) {
+                  hppDout(info, k);
+                  hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
+                  hppDout(info, "\n" << (hessianStack[k] - hessianStack[k].transpose())/2);
+                  hessianStack[k] = (hessianStack[k] + hessianStack[k].transpose())/2;
+                }
+              }
+              //getHessianFiniteDiff(freeParameters, splines, hessianStack, stepSize,
+                  //hybridSolver, dofPerSpline, nbConstraints, stateSpace);
+              //getHessianDoubleFiniteDiff(freeParameters, splines, hessianStack, stepSize, hybridSolver);
               hppDout(info, "Done!");
 
               vector_t freeParametersStep (freeParameters.size());
@@ -869,16 +927,16 @@ namespace hpp {
                   splines, value, hybridSolver);
               getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * reducedParameters + freeParametersStep,
                   splines, tmpValue, hybridSolver);
-              hppDout(info, (tmpValue - value).norm());
-              hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).norm());
+              //hppDout(info, (tmpValue - value).norm());
+              //hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).norm());
               vector_t ddv(nbConstraints);
               for (std::size_t k = 0; k < nbConstraints; ++k)
               {
                 ddv.row(k) = .5 * freeParametersStep.transpose() * hessianStack[k] * freeParametersStep;
               }
-              hppDout(info,(tmpValue - (value + jacobian * freeParametersStep + ddv)).norm());
-              hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).transpose());
-              hppDout(info, (tmpValue - (value + jacobian * freeParametersStep + ddv)).transpose());
+              //hppDout(info,(tmpValue - (value + jacobian * freeParametersStep + ddv)).norm());
+              //hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).transpose());
+              //hppDout(info, (tmpValue - (value + jacobian * freeParametersStep + ddv)).transpose());
 
               Eigen::JacobiSVD<matrix_t> svd(reducedJacobian.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
               hppDout(info, svd.singularValues().transpose().reverse());
@@ -896,7 +954,6 @@ namespace hpp {
 
               matrix_t inverseGram = svd.matrixV() * pseudoInverse.asDiagonal() * svd.matrixV().transpose();
 
-
               hessian = costQuadratic;
               hessianCorrection.setZero();
               for (std::size_t i = 0; i < hessianStack.size(); ++i)
@@ -912,7 +969,10 @@ namespace hpp {
                 * jacobianConstraint.PK;
               vector_t step (reducedParameters.size());
 
-              do {
+              bool goodEnough = false;
+              bool radiusLimitReached = false;
+              while (not goodEnough)
+              {
                 hppDout(info, "Trust radius: " << trustRadius);
                 vector_t solution = solveQP(projectedHessian,
                     -jacobianConstraint.PK.transpose() * gradient, trustRadius);
@@ -926,14 +986,32 @@ namespace hpp {
                     splines, tmpValue, hybridSolver);
                 hppDout(info, "First error " << tmpValue.norm());
                 hppDout(info, "Second error " << value.norm());
-                if (value.norm() < 1e-5){
+                if (value.norm() < 1e-2){
                   step = stepCandidate;
-                  trustRadius *= 2;
+                  goodEnough = true;
+                  if (solution.norm() > trustRadius*.75 and not radiusLimitReached)
+                  {
+                    goodEnough = false;
+                    trustRadius *= 2;
+                  }
                 }
-                else trustRadius *= .5;
+                else
+                {
+                  goodEnough = false;
+                  radiusLimitReached = true;
+                  trustRadius *= .5;
+                }
+                if (goodEnough)
+                  hppDout(info, "Predicted decrease " << .5 * solution.transpose() * projectedHessian * solution
+                      + gradient.transpose() * jacobianConstraint.PK * solution);
               }
-              while (value.norm() <  1e-5);
+              value_type oldCost = .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
+                    + costLinear.transpose() * reducedParameters)(0, 0) + costConstant;
               reducedParameters += step;
+              if (step.norm() < .01) break;
+              value_type newCost = .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
+                    + costLinear.transpose() * reducedParameters)(0, 0) + costConstant;
+              hppDout(info, "Actual decrease " << newCost - oldCost);
               hppDout(info, "Cost: " << .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
                     + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             }
