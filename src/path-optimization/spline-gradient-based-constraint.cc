@@ -51,6 +51,16 @@ namespace hpp {
       HPP_DEFINE_TIMECOUNTER(SGB_qpDecomposition);
       // HPP_DEFINE_TIMECOUNTER(SGB_findNewConstraint);
       HPP_DEFINE_TIMECOUNTER(SGB_qpSolve);
+      HPP_DEFINE_TIMECOUNTER(SGB_hessianJacobians);
+      HPP_DEFINE_TIMECOUNTER(SGB_hessianAssignment);
+      HPP_DEFINE_TIMECOUNTER(SGB_hessian);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian1);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian21);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian22);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian23);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian24);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian3);
+      HPP_DEFINE_TIMECOUNTER(SGB_jacobian4);
 
       template <int NbRows>
         VectorMap_t reshape (Eigen::Matrix<value_type, NbRows, Eigen::Dynamic, Eigen::RowMajor>& parameters)
@@ -536,6 +546,7 @@ namespace hpp {
          const std::vector<size_type>& dofPerSpline,
          HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace) const
         {
+          HPP_START_TIMECOUNTER(SGB_jacobian1);
           getFullSplines(x, splines, hybridSolver);
           vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
           vector_t baseConfiguration(splines.size() * 2 * robot_->configSize());
@@ -556,10 +567,21 @@ namespace hpp {
           }
 
           hybridSolver.explicitSolver().solve(stateConfiguration);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian1);
+          HPP_START_TIMECOUNTER(SGB_jacobian21);
           hybridSolver.computeValue<true>(stateConfiguration);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian21);
+          HPP_START_TIMECOUNTER(SGB_jacobian22);
           hybridSolver.updateJacobian(stateConfiguration);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian22);
+          HPP_START_TIMECOUNTER(SGB_jacobian23);
           hybridSolver.getValue(value);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian23);
+          HPP_START_TIMECOUNTER(SGB_jacobian24);
           hybridSolver.getReducedJacobian(jacobian);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian24);
+
+          HPP_START_TIMECOUNTER(SGB_jacobian3);
 
           Eigen::ColBlockIndices initialEndIndices;
           size_type index = 0;
@@ -572,12 +594,13 @@ namespace hpp {
           vector_t initialEndParameters =
             initialEndIndices.transpose().rview(x);
 
-          matrix_t J (stateSpace->nv(), stateSpace->nv());
-          J.setIdentity();
           LiegroupElement baseElement(hybridSolver.explicitSolver().freeArgs().rview(baseConfiguration), stateSpace);
           matrix_t initialEndJacobian = initialEndIndices.rview(jacobian);
+          HPP_STOP_TIMECOUNTER(SGB_jacobian3);
+          HPP_START_TIMECOUNTER(SGB_jacobian4);
           stateSpace->dIntegrate_dv <false> (baseElement, initialEndParameters, initialEndJacobian); 
           initialEndIndices.lview(jacobian) = initialEndJacobian;
+          HPP_STOP_TIMECOUNTER(SGB_jacobian4);
         }
 
       template <int _PB, int _SO>
@@ -587,6 +610,7 @@ namespace hpp {
          HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
          const std::vector<size_type>& constraintSplineIndex) const
         {
+          HPP_SCOPE_TIMECOUNTER(SGB_hessian);
           // TODO: Equality type constraints
           size_type maxDof = *std::max_element(dofPerSpline.begin(), dofPerSpline.end());
           std::vector<size_type> splineIndex;
@@ -617,13 +641,16 @@ namespace hpp {
               if (i < dofPerSpline[j]) step[splineIndex[j] + i] = stepSize;
             }
 
+            HPP_START_TIMECOUNTER(SGB_hessianJacobians);
             getConstraintsValueJacobian(x + step, splines, tmpValue.topRows(nbConstraints),
                 jacobianPlus.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
             getConstraintsValueJacobian(x - step, splines, tmpValue.topRows(nbConstraints),
                 jacobianMinus.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+            HPP_STOP_TIMECOUNTER(SGB_hessianJacobians);
 
             jacobianDiff = (jacobianPlus - jacobianMinus)/(2*stepSize);
 
+            HPP_START_TIMECOUNTER(SGB_hessianAssignment);
             for (std::size_t k = 0; k < nbConstraints; ++k)
             {
               if (i < dofPerSpline[constraintSplineIndex[k]]) {
@@ -631,6 +658,7 @@ namespace hpp {
                 hessianStack[k].row(variableIndex) = jacobianDiff.row(k);
               }
             }
+            HPP_STOP_TIMECOUNTER(SGB_hessianAssignment);
 
             for (std::size_t j = 0; j < splines.size(); ++j)
             {
@@ -823,7 +851,6 @@ namespace hpp {
           std::vector<size_type> constraintSplineIndex;
           addProblemConstraints(splines, hybridSolver, linearConstraints,
               dofPerSpline, argPerSpline, nbConstraints, constraintSplineIndex);
-          hppDout(info, hybridSolver);
 
           std::vector<LiegroupSpacePtr_t> splineSpaces (splines.size());
           LiegroupSpacePtr_t stateSpace = createProblemLieGroup(splineSpaces, splines, hybridSolver);
@@ -893,7 +920,7 @@ namespace hpp {
             reducedParameters += correction;
 
             bool optimumReached = false;
-            if (value.norm() < 1e-5)
+            if (value.norm() < 1e-3)
             {
               LinearConstraint jacobianConstraint (reducedJacobian.cols(), reducedJacobian.rows());
               jacobianConstraint.J = reducedJacobian;
@@ -905,9 +932,12 @@ namespace hpp {
               freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
               getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline, stepSize,
                   hybridSolver, stateSpace, nbConstraints, constraintSplineIndex);
+              HPP_DISPLAY_TIMECOUNTER(SGB_hessianJacobians);
+              HPP_DISPLAY_TIMECOUNTER(SGB_hessianAssignment);
+              HPP_DISPLAY_TIMECOUNTER(SGB_hessian);
               for (std::size_t k = 0; k < hessianStack.size(); ++k)
               {
-                if ((hessianStack[k] - hessianStack[k].transpose()).norm() > .001) {
+                if ((hessianStack[k] - hessianStack[k].transpose()).norm() > 1e-3) {
                   hppDout(info, k);
                   hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
                   hppDout(info, "\n" << (hessianStack[k] - hessianStack[k].transpose())/2);
@@ -1008,7 +1038,13 @@ namespace hpp {
               value_type oldCost = .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
                     + costLinear.transpose() * reducedParameters)(0, 0) + costConstant;
               reducedParameters += step;
-              if (step.norm() < .01) break;
+              if (step.norm() < .01) {
+                Eigen::SelfAdjointEigenSolver<matrix_t> eigenSolver(projectedHessian);
+                vector_t d = eigenSolver.eigenvalues();
+                hppDout(info, d.transpose());
+                hppDout(info, d[d.size()-1]/d[0]);
+                break;
+              }
               value_type newCost = .5 * (reducedParameters.transpose() * (costQuadratic * reducedParameters)
                     + costLinear.transpose() * reducedParameters)(0, 0) + costConstant;
               hppDout(info, "Actual decrease " << newCost - oldCost);
@@ -1027,6 +1063,13 @@ namespace hpp {
             // If in collision, add constraint and go back to collision free state
             // Else, go to new state
           }
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian1);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian21);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian22);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian23);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian24);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian3);
+          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian4);
           getFullSplines(linearConstraints.xStar + linearConstraints.PK * reducedParameters, splines, hybridSolver);
           return this->buildPathVector(splines);
         }
