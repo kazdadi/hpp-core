@@ -118,17 +118,17 @@ namespace hpp {
 
           void addCollisionConstraint(Splines_t collisionFreeSplines, Splines_t collisionSplines,
               std::pair<CollisionPathValidationReportPtr_t, std::size_t> collisionReport,
-              std::vector<DifferentiableFunctionPtr_t> collFunctions, std::vector<value_type> collValues,
-              std::vector<size_type> collIndices, std::vector<value_type> collTimes) const;
+              std::vector<DifferentiableFunctionPtr_t>& collFunctions, std::vector<value_type>& collValues,
+              std::vector<size_type>& collIndices, std::vector<value_type>& collTimes) const;
 
           void getConstraintsValue(const vector_t x, Splines_t& splines, vectorOut_t value,
               HybridSolver& hybridSolver) const;
 
           void getCollisionConstraintsValue (
               const vector_t x, Splines_t& splines, vectorOut_t value, HybridSolver& hybridSolver,
-              const std::vector<DifferentiableFunctionPtr_t> collFunctions,
-              const std::vector<value_type> collValues, const std::vector<size_type> collIndices,
-              const std::vector<value_type> collTimes) const;
+              const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
+              const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
+              const std::vector<value_type>& collTimes) const;
 
           void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vectorOut_t value,
               matrixOut_t jacobian, const std::vector<size_type>& dofPerSpline,
@@ -146,8 +146,12 @@ namespace hpp {
               HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
               const std::vector<size_type>& constraintSplineIndex) const;
 
-          void getJacobianFiniteDiff(const vector_t x, Splines_t& splines, matrixOut_t jacobian,
-              const value_type stepSize, HybridSolver& hybridSolver) const;
+          void getJacobianFiniteDiff
+            (const vector_t x, Splines_t& splines, matrixOut_t jacobian,
+             const value_type stepSize, HybridSolver& hybridSolver, size_type nbConstraints,
+             const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
+             const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
+             const std::vector<value_type>& collTimes) const;
 
           void getHessianDoubleFiniteDiff
             (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
