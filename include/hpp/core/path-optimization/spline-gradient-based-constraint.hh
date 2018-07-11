@@ -146,6 +146,13 @@ namespace hpp {
               HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
               const std::vector<size_type>& constraintSplineIndex) const;
 
+          void getCollisionConstraintsHessians
+            (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
+             const std::vector<size_type>& dofPerSpline, const value_type stepSize,
+             HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces, size_type nbConstraints,
+             const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
+             const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const;
+
           void getJacobianFiniteDiff
             (const vector_t x, Splines_t& splines, matrixOut_t jacobian,
              const value_type stepSize, HybridSolver& hybridSolver, size_type nbConstraints,
