@@ -31,6 +31,7 @@
 #include <hpp/core/locked-joint.hh>
 #include <hpp/core/problem.hh>
 #include <hpp/core/collision-path-validation-report.hh>
+#include <hpp/core/path-optimization/quadratic-program.hh>
 
 #include <path-optimization/spline-gradient-based/cost.hh>
 #include <path-optimization/spline-gradient-based/collision-constraint.hh>
@@ -1164,18 +1165,38 @@ namespace hpp {
             hppDout(info, "Condition number: " << dd[dd.size()-1]/dd[0]);
           }
 
-          LinearConstraint boundConstraint (nParameters * rDof, 0);
+          LinearConstraint boundConstraint (nDers, 0);
           if (checkJointBound) {
             this->jointBoundConstraint(splines, boundConstraint);
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
           }
-          hppDout(info, 1);
           if (checkCollisions) {
             if (!(this->validatePath(splines, true)).empty())
               throw std::invalid_argument("Input path contains a collision");
           }
-          hppDout(info, 1);
+
+          matrix_t boundConstraintFree = hybridSolver.explicitSolver().freeDers().rview(boundConstraint.J);
+          LinearConstraint boundConstraintReduced (reducedParameters.size(), boundConstraint.J.rows());
+          boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
+          boundConstraintReduced.b = boundConstraint.b - boundConstraintFree * linearConstraints.xStar;
+
+          Eigen::RowBlockIndices nonZeroRows;
+          for (std::size_t i = 0; i < boundConstraintFree.rows(); ++i) {
+            if (not boundConstraintReduced.J.row(i).isZero(1e-10))
+              nonZeroRows.addRow(i, 1);
+          }
+
+          hppDout(info, boundConstraintReduced.J.rows() << " " << boundConstraintReduced.J.cols());
+
+          //boundConstraintReduced.J = nonZeroRows.rview(boundConstraintReduced.J).eval();
+          //boundConstraintReduced.b = nonZeroRows.rview(boundConstraintReduced.b).eval();
+
+          hppDout(info, boundConstraintReduced.J.rows() << " " << boundConstraintReduced.J.cols());
+          hppDout(info, (boundConstraintReduced.J * reducedParameters - boundConstraintReduced.b).transpose());
+          boundConstraintReduced.decompose();
+          hppDout(info, 2*boundConstraintReduced.rank);
+          std::vector<size_type> activeBoundIndices;
 
           vector_t value(nbConstraints);
           matrix_t jacobian(nbConstraints, freeParameters.size());
@@ -1248,15 +1269,30 @@ namespace hpp {
             hppDout(info, "Cost: " << (.5*reducedParameters.transpose() * (costQuadratic * reducedParameters)
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             // Correct constraints error
+
+            LinearConstraint jacobianConstraint (reducedJacobian.cols(), reducedJacobian.rows());
+            jacobianConstraint.J = reducedJacobian;
+            jacobianConstraint.b = jacobianConstraint.J*reducedParameters - value;
+            hppDout(info, reducedParameters.size());
+            hppDout(info, jacobianConstraint.J.rows() << " " << jacobianConstraint.J.cols());
+            hppDout(info, boundConstraintReduced.J.rows() << " " << boundConstraintReduced.J.cols());
+
+            QuadraticProgram QP (reducedParameters.size());
+            QP.H = matrix_t::Identity(reducedParameters.size(), reducedParameters.size());
+            QP.b = -reducedParameters;
+            QP.computeLLT();
+            QP.solve(jacobianConstraint, boundConstraintReduced);
+            hppDout(info, (boundConstraintReduced.J * reducedParameters - boundConstraintReduced.b).minCoeff());
+
             vector_t correction = reducedJacobian.colPivHouseholderQr().solve(-value);
+            hppDout(info, (QP.xStar-reducedParameters-correction).norm());
             reducedParameters += correction;
+            hppDout(info, (boundConstraintReduced.J * reducedParameters - boundConstraintReduced.b).minCoeff());
+            hppDout(info, (boundConstraintReduced.J * (QP.xStar) - boundConstraintReduced.b).minCoeff());
 
             bool optimumReached = false;
             if (value.norm() < 1e-3)
             {
-              LinearConstraint jacobianConstraint (reducedJacobian.cols(), reducedJacobian.rows());
-              jacobianConstraint.J = reducedJacobian;
-              jacobianConstraint.b.setZero();
               jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
 
@@ -1353,6 +1389,7 @@ namespace hpp {
               while (true)
               {
                 hppDout(info, "Trust radius: " << trustRadius);
+                // TODO: reuse SVD
                 vector_t solution = solveQP (projectedHessian,
                     -jacobianConstraint.PK.transpose() * gradient, trustRadius);
                 step = jacobianConstraint.PK * solution;
