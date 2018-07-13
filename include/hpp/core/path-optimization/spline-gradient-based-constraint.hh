@@ -110,7 +110,7 @@ namespace hpp {
           vector_t solveQP(matrix_t& A, vector_t b, value_type r) const;
 
           /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
-          vector_t solveInequalityQP(matrix_t& A, vector_t b, matrix_t& C, value_type r) const;
+          vector_t solveInequalityQP(matrix_t& H, vector_t& b, matrix_t& Ai, vector_t& bi, value_type r) const;
 
           void getHessianFiniteDiff (const vector_t x, Splines_t& splines,
               std::vector<matrix_t>& hessianStack, const value_type stepSize, HybridSolver& hybridSolver,

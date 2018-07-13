@@ -527,9 +527,42 @@ namespace hpp {
 
       template <int _PB, int _SO>
         vector_t SplineGradientBasedConstraint<_PB, _SO>::solveInequalityQP
-        (matrix_t& A, vector_t b, matrix_t& C, value_type r) const
+        (matrix_t& H, vector_t& b, matrix_t& Ai, vector_t& bi, value_type r) const
         {
-          return b;
+          hppDout(info, H.rows() << " " << H.cols() << " " << H.norm());
+          hppDout(info, b.rows() << " " << b.cols() << " " << b.norm());
+          hppDout(info, Ai.rows() << " " << Ai.cols() << " " << Ai.norm());
+          hppDout(info, bi.rows() << " " << bi.cols() << " " << bi.norm());
+          hppDout(info, bi.maxCoeff());
+          for (std::size_t i = 0; i < bi.size()/2; ++i)
+          {
+            hppDout(info, (bi[2*i] >= 0) << " " << (bi[2*i + 1] >= 0));
+          }
+          vector_t solution (H.rows());
+          solution.setZero();
+          matrix_t A = H;
+          matrix_t id = matrix_t::Identity (H.rows(), H.rows());
+          value_type u = 0;
+          bool farSolution = false;
+          Eigen::VectorXi activeSet;
+          matrix_t noConstraints (0, H.rows());
+          vector_t noConstraintsRhs (0);
+          value_type norm;
+          int activeSetSize;
+          do
+          {
+            A = H + u*id;
+            hppDout(info, u);
+            Eigen::solve_quadprog (A, b, noConstraints, noConstraintsRhs, Ai, bi, solution, activeSet, activeSetSize);
+            // TODO: Improve initial guess for u
+            if (not farSolution) u = 1;
+            else u *= 2;
+            farSolution = true;
+            norm = solution.norm();
+            hppDout(info, norm);
+          }
+          while (std::isnan(norm) or norm > r);
+          return solution;
         }
 
       template <int _PB, int _SO>
@@ -1178,24 +1211,46 @@ namespace hpp {
 
           matrix_t boundConstraintFree = hybridSolver.explicitSolver().freeDers().rview(boundConstraint.J);
           LinearConstraint boundConstraintReduced (reducedParameters.size(), boundConstraint.J.rows());
-          boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
-          boundConstraintReduced.b = boundConstraint.b - boundConstraintFree * linearConstraints.xStar;
-
           Eigen::RowBlockIndices nonZeroRows;
           for (std::size_t i = 0; i < boundConstraintFree.rows(); ++i) {
-            if (not boundConstraintReduced.J.row(i).isZero(1e-10))
+            if (not boundConstraintFree.row(i).isZero(1e-10))
               nonZeroRows.addRow(i, 1);
           }
 
+          boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
+          boundConstraintReduced.b = boundConstraint.b - boundConstraintFree * linearConstraints.xStar;
+
           hppDout(info, boundConstraintReduced.J.rows() << " " << boundConstraintReduced.J.cols());
 
-          //boundConstraintReduced.J = nonZeroRows.rview(boundConstraintReduced.J).eval();
-          //boundConstraintReduced.b = nonZeroRows.rview(boundConstraintReduced.b).eval();
+          boundConstraintReduced.J = nonZeroRows.rview(boundConstraintReduced.J).eval();
+          boundConstraintReduced.b = nonZeroRows.rview(boundConstraintReduced.b).eval();
 
           hppDout(info, boundConstraintReduced.J.rows() << " " << boundConstraintReduced.J.cols());
           hppDout(info, (boundConstraintReduced.J * reducedParameters - boundConstraintReduced.b).transpose());
-          boundConstraintReduced.decompose();
-          hppDout(info, 2*boundConstraintReduced.rank);
+
+          nonZeroRows.clearRows();
+          if (MaxContinuityOrder == 0)
+          {
+            size_type i = 0;
+            size_type index = 0;
+            size_type row = 0;
+            while (i < splines.size())
+            {
+              if (boundConstraintFree.row(row).middleCols(index, dofPerSpline[i]).isZero(1e-5)) {
+                index += 2*dofPerSpline[i];
+                ++i;
+              }
+              else
+              {
+                nonZeroRows.addRow(row, 1);
+                ++row;
+              }
+            }
+          }
+          else if (MaxContinuityOrder == 1)
+          {
+          }
+
           std::vector<size_type> activeBoundIndices;
 
           vector_t value(nbConstraints);
@@ -1286,9 +1341,8 @@ namespace hpp {
 
             vector_t correction = reducedJacobian.colPivHouseholderQr().solve(-value);
             hppDout(info, (QP.xStar-reducedParameters-correction).norm());
-            reducedParameters += correction;
-            hppDout(info, (boundConstraintReduced.J * reducedParameters - boundConstraintReduced.b).minCoeff());
-            hppDout(info, (boundConstraintReduced.J * (QP.xStar) - boundConstraintReduced.b).minCoeff());
+            //reducedParameters += correction;
+            reducedParameters = QP.xStar;
 
             bool optimumReached = false;
             if (value.norm() < 1e-3)
@@ -1386,12 +1440,18 @@ namespace hpp {
               bool collisionFound = false;
               Reports_t collisionReports;
 
+              matrix_t Ai = boundConstraintReduced.J * jacobianConstraint.PK;
+              vector_t bi = boundConstraintReduced.b - boundConstraintReduced.J*reducedParameters;
+              hppDout(info, bi.maxCoeff());
+              vector_t projectedGradient = jacobianConstraint.PK.transpose() * gradient;
               while (true)
               {
                 hppDout(info, "Trust radius: " << trustRadius);
                 // TODO: reuse SVD
-                vector_t solution = solveQP (projectedHessian,
-                    -jacobianConstraint.PK.transpose() * gradient, trustRadius);
+                //vector_t solution = solveQP (projectedHessian,
+                    //-jacobianConstraint.PK.transpose() * gradient, trustRadius);
+                vector_t solution = solveInequalityQP (projectedHessian, projectedGradient, Ai, bi, trustRadius);
+
                 step = jacobianConstraint.PK * solution;
                 hppDout(info, "Step: " << solution.norm());
                 hppDout(info, "Correction term: " << getSecondOrderCorrection(step,
