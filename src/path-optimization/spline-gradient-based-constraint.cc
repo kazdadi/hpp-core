@@ -1052,7 +1052,7 @@ namespace hpp {
           while (i < value.size())
           {
             maxError = (value.segment(i, constraintOutputSize[i]).norm() / errorThreshold[i] > maxError) ?
-              value.segment(i, constraintOutputSize[i]).norm() : maxError;
+              value.segment(i, constraintOutputSize[i]).norm()/errorThreshold[i] : maxError;
             i += constraintOutputSize[i];
           }
           return maxError;
