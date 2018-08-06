@@ -95,10 +95,11 @@ namespace hpp {
         void SplineGradientBasedConstraint<_PB, _SO>::addProblemConstraints
         (const Splines_t splines, HybridSolver& hybridSolver, LinearConstraint& constraint,
          std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
-         size_type& nbConstraints, std::vector<size_type>& constraintSplineIndex,
-         std::vector<size_type>& constraintOutputSize, std::vector<value_type>& errorThreshold) const
+         std::vector<size_type>& constraintSplineIndex,
+         std::vector<size_type>& constraintOutputSize,
+         std::vector<value_type>& errorThreshold) const
         {
-          nbConstraints = 0;
+          this->nbConstraints = 0;
           constraintSplineIndex.empty();
           size_type nArgs = splines.size() * Spline::NbCoeffs * robot_->configSize();
           size_type nDers = splines.size() * Spline::NbCoeffs * robot_->numberDof();
@@ -216,7 +217,7 @@ namespace hpp {
                       StateFunction::Ptr_t initialNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
                             nArgs, nDers, inArgs, inDers));
                       hybridSolver.add(initialNumericalconstraint, 0, numericalConstraint->comparisonType());
-                      nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                      this->nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
                       for (std::size_t k = 0; k < numericalConstraint->functionPtr()->outputDerivativeSize(); ++k)
                       {
                         constraintSplineIndex.push_back(i);
@@ -232,7 +233,7 @@ namespace hpp {
                       StateFunction::Ptr_t endNumericalconstraint (new StateFunction(numericalConstraint->functionPtr(),
                             nArgs, nDers, inArgs, inDers));
                       hybridSolver.add(endNumericalconstraint, 0, numericalConstraint->comparisonType());
-                      nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
+                      this->nbConstraints += numericalConstraint->functionPtr()->outputDerivativeSize();
                       for (std::size_t k = 0; k < numericalConstraint->functionPtr()->outputDerivativeSize(); ++k)
                       {
                         constraintSplineIndex.push_back(i+1);
@@ -568,9 +569,7 @@ namespace hpp {
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::addCollisionConstraint (
             Splines_t collisionFreeSplines, Splines_t collisionSplines,
-            std::pair<CollisionPathValidationReportPtr_t, std::size_t> collisionReport,
-            std::vector<DifferentiableFunctionPtr_t>& collFunctions, std::vector<value_type>& collValues,
-            std::vector<size_type>& indices, std::vector<value_type>& times) const
+            std::pair<CollisionPathValidationReportPtr_t, std::size_t> collisionReport) const
         {
           DifferentiableFunctionPtr_t cc =
             CollisionFunction::create(robot_,
@@ -581,10 +580,10 @@ namespace hpp {
           vector_t configOnSpline(cc->inputSize());
           collisionFreeSplines[collisionReport.second]->at (collisionReport.first->parameter, configOnSpline);
           (*(collisionFreeSplines[collisionReport.second])) (collisionFreeConfig, collisionReport.first->parameter);
-          collFunctions.push_back(cc);
-          collValues.push_back((((*cc) (configOnSpline)).vector())[0]);
-          indices.push_back(collisionReport.second);
-          times.push_back(collisionReport.first->parameter);
+          this->collFunctions.push_back(cc);
+          this->collValues.push_back((((*cc) (configOnSpline)).vector())[0]);
+          this->collIndices.push_back(collisionReport.second);
+          this->collTimes.push_back(collisionReport.first->parameter);
         }
 
       template <int _PB, int _SO>
@@ -612,21 +611,18 @@ namespace hpp {
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getCollisionConstraintsValue
-        (const vector_t x, Splines_t& splines, vectorOut_t value, HybridSolver& hybridSolver,
-         const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
-         const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
-         const std::vector<value_type>& collTimes) const
+        (const vector_t x, Splines_t& splines, vectorOut_t value, HybridSolver& hybridSolver) const
         {
           vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
           stateConfiguration.setZero();
-          for (std::size_t i = 0; i < collFunctions.size(); ++i)
+          for (std::size_t i = 0; i < this->collFunctions.size(); ++i)
           {
-            splines[collIndices[i]]->at (collTimes[i],
-                stateConfiguration.segment(collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+            splines[this->collIndices[i]]->at (this->collTimes[i],
+                stateConfiguration.segment(this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
             hybridSolver.explicitSolver().solve(stateConfiguration);
-            value.row(i) = ((*(collFunctions[i])) (stateConfiguration.segment
-                 (collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
-            value[i] -= collValues[i];
+            value.row(i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
+                 (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
+            value[this->nbConstraints+i] -= this->collValues[i];
           }
         }
 
@@ -698,9 +694,7 @@ namespace hpp {
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getCollisionConstraintsValueJacobian
         (const vector_t x, Splines_t& splines, vectorOut_t value, matrixOut_t jacobian, HybridSolver& hybridSolver,
-         const std::vector<size_type>& dofPerSpline, const std::vector<LiegroupSpacePtr_t>& splineSpaces,
-         const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
-         const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const
+         const std::vector<size_type>& dofPerSpline, const std::vector<LiegroupSpacePtr_t>& splineSpaces) const
         {
           std::vector<size_type> splineIndex;
           size_type index = 0;
@@ -711,34 +705,34 @@ namespace hpp {
           }
           vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
           stateConfiguration.setZero();
-          matrix_t collisionJacobian (collFunctions.size(), splines.size()*Spline::NbCoeffs*robot_->numberDof());
+          matrix_t collisionJacobian (this->collFunctions.size(), splines.size()*Spline::NbCoeffs*robot_->numberDof());
           getFullSplines(x, splines, hybridSolver);
-          for (std::size_t i = 0; i < collFunctions.size(); ++i)
+          for (std::size_t i = 0; i < this->collFunctions.size(); ++i)
           {
-            index = splineIndex[collIndices[i]];
-            size_type dof = dofPerSpline[collIndices[i]];
+            index = splineIndex[this->collIndices[i]];
+            size_type dof = dofPerSpline[this->collIndices[i]];
 
-            splines[collIndices[i]]->at (collTimes[i],
-                stateConfiguration.segment(collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+            splines[this->collIndices[i]]->at (this->collTimes[i],
+                stateConfiguration.segment(this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
             hybridSolver.explicitSolver().solve(stateConfiguration);
 
-            value.row(i) = ((*(collFunctions[i])) (stateConfiguration.segment
-                 (collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
-            value[i] -= collValues[i];
+            value.row(i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
+                 (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
+            value[this->nbConstraints+i] -= this->collValues[i];
 
             collisionJacobian.setZero();
-            collFunctions[i]->jacobian(collisionJacobian.middleRows(i, 1)
-                .middleCols(collIndices[i]*Spline::NbCoeffs*robot_->numberDof(), robot_->numberDof()),
+            this->collFunctions[i]->jacobian(collisionJacobian.middleRows(i, 1)
+                .middleCols(this->collIndices[i]*Spline::NbCoeffs*robot_->numberDof(), robot_->numberDof()),
                 stateConfiguration.segment
-                 (collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+                 (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
             hybridSolver.reduceJacobian(stateConfiguration,
-                collisionJacobian.middleRows(i, 1), jacobian.middleRows(i, 1));
+                collisionJacobian.middleRows(i, 1), jacobian.middleRows(this->nbConstraints+i, 1));
 
             vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
             matrix_t splinesJacobian(dof, x.size());
             splinesJacobian.setZero();
-            splines[collIndices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, collTimes[i]);
+            splines[this->collIndices[i]]->parameterDerivativeCoefficients(BernsteinCoeffs, this->collTimes[i]);
 
             vector_t v (dof);
             v.setZero();
@@ -749,18 +743,20 @@ namespace hpp {
               v += BernsteinCoeffs[j] * x.segment(index + dof*j, dof);
             }
 
-            splineSpaces[collIndices[i]]->dIntegrate_dv <false> (splineSpaces[collIndices[i]]->neutral(),
-                v, jacobian.middleRows(i, 1).middleCols(index, dof));
+            splineSpaces[this->collIndices[i]]->dIntegrate_dv <false> (splineSpaces[this->collIndices[i]]->neutral(),
+                v, jacobian.middleRows(this->nbConstraints+i, 1).middleCols(index, dof));
 
-            jacobian.middleRows(i, 1) = (jacobian.middleRows(i, 1).middleCols(index, dof) * splinesJacobian).eval();
+            jacobian.middleRows(this->nbConstraints+i, 1) =
+              (jacobian.middleRows(this->nbConstraints+i, 1).
+               middleCols(index, dof) * splinesJacobian).eval();
           }
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getConstraintsHessian
         (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
-         const std::vector<size_type>& dofPerSpline, const value_type stepSize,
-         HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
+         const std::vector<size_type>& dofPerSpline,
+         HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace,
          const std::vector<size_type>& constraintSplineIndex) const
         {
           HPP_SCOPE_TIMECOUNTER(SGB_hessian);
@@ -782,7 +778,7 @@ namespace hpp {
           jacobianMinus.setZero();
           matrix_t jacobianDiff (hessianStack.size(), x.size());
           matrix_t jacobianDiffFinite (hessianStack.size(), x.size());
-          vector_t tmpValue (nbConstraints);
+          vector_t tmpValue (this->nbConstraints);
           vector_t step(x.size());
           step.setZero();
 
@@ -791,20 +787,20 @@ namespace hpp {
           {
             for (std::size_t j = 0; j < splines.size(); ++j)
             {
-              if (i < dofPerSpline[j]) step[splineIndex[j] + i] = stepSize;
+              if (i < dofPerSpline[j]) step[splineIndex[j] + i] = this->stepSize;
             }
 
             HPP_START_TIMECOUNTER(SGB_hessianJacobians);
-            getConstraintsValueJacobian(x + step, splines, tmpValue.topRows(nbConstraints),
-                jacobianPlus.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
-            getConstraintsValueJacobian(x - step, splines, tmpValue.topRows(nbConstraints),
-                jacobianMinus.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+            getConstraintsValueJacobian(x + step, splines, tmpValue.topRows(this->nbConstraints),
+                jacobianPlus.topRows(this->nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+            getConstraintsValueJacobian(x - step, splines, tmpValue.topRows(this->nbConstraints),
+                jacobianMinus.topRows(this->nbConstraints), dofPerSpline, hybridSolver, stateSpace);
             HPP_STOP_TIMECOUNTER(SGB_hessianJacobians);
 
-            jacobianDiff = (jacobianPlus - jacobianMinus)/(2*stepSize);
+            jacobianDiff = (jacobianPlus - jacobianMinus)/(2*this->stepSize);
 
             HPP_START_TIMECOUNTER(SGB_hessianAssignment);
-            for (std::size_t k = 0; k < nbConstraints; ++k)
+            for (std::size_t k = 0; k < this->nbConstraints; ++k)
             {
               if (i < dofPerSpline[constraintSplineIndex[k]]) {
                 variableIndex = splineIndex[constraintSplineIndex[k]] + i;
@@ -823,10 +819,8 @@ namespace hpp {
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getCollisionConstraintsHessians
         (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
-         const std::vector<size_type>& dofPerSpline, const value_type stepSize,
-         HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces, size_type nbConstraints,
-         const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
-         const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const
+         const std::vector<size_type>& dofPerSpline,
+         HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces) const
         {
           std::vector<size_type> splineIndex;
           size_type index = 0;
@@ -850,17 +844,17 @@ namespace hpp {
           v.setZero();
           full_v.setZero();
           step.setZero();
-          for (std::size_t k = 0; k < collFunctions.size(); ++k)
+          for (std::size_t k = 0; k < this->collFunctions.size(); ++k)
           {
-            index = splineIndex[collIndices[k]];
-            size_type dof = dofPerSpline[collIndices[k]];
+            index = splineIndex[this->collIndices[k]];
+            size_type dof = dofPerSpline[this->collIndices[k]];
             matrix_t collisionHessian (dof, dof);
             collisionHessian.setZero();
 
             vector_t BernsteinCoeffs(int (Spline::NbCoeffs));
             matrix_t splinesJacobian(dof, x.size());
             splinesJacobian.setZero();
-            splines[collIndices[k]]->parameterDerivativeCoefficients(BernsteinCoeffs, collTimes[k]);
+            splines[this->collIndices[k]]->parameterDerivativeCoefficients(BernsteinCoeffs, this->collTimes[k]);
 
             for (std::size_t j = 0; j < BernsteinCoeffs.size(); ++j) {
               splinesJacobian.block(0, index + dof*j, dof, dof) =
@@ -870,65 +864,61 @@ namespace hpp {
 
             for (std::size_t i = 0; i < dof; ++i)
             {
-              step[index + i] = stepSize;
+              step[index + i] = this->stepSize;
               // Jacobian at v + step
               hybridSolver.explicitSolver().freeDers().transpose().lview(full_v) = v + step;
 
-              splines[collIndices[k]]->rowParameters(full_v.segment
-                  (collIndices[k]*Spline::NbCoeffs*robot_->numberDof(), Spline::NbCoeffs*robot_->numberDof()));
-              splines[collIndices[k]]->at (splines[collIndices[k]]->timeRange().first,
-                  stateConfiguration.segment(collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+              splines[this->collIndices[k]]->rowParameters(full_v.segment
+                  (this->collIndices[k]*Spline::NbCoeffs*robot_->numberDof(), Spline::NbCoeffs*robot_->numberDof()));
+              splines[this->collIndices[k]]->at (splines[this->collIndices[k]]->timeRange().first,
+                  stateConfiguration.segment(this->collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
               hybridSolver.explicitSolver().solve(stateConfiguration);
 
-              collFunctions[k]->jacobian(collisionJacobianPlus.middleCols(collIndices[k]
+              this->collFunctions[k]->jacobian(collisionJacobianPlus.middleCols(this->collIndices[k]
                     *Spline::NbCoeffs*robot_->numberDof(), robot_->numberDof()),
                     stateConfiguration.segment
-                    (collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+                    (this->collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
               hybridSolver.reduceJacobian(stateConfiguration,
                   collisionJacobianPlus, reducedCollisionJacobianPlus);
 
-              splineSpaces[collIndices[k]]->dIntegrate_dv <false> (splineSpaces[collIndices[k]]->neutral(),
+              splineSpaces[this->collIndices[k]]->dIntegrate_dv <false> (splineSpaces[this->collIndices[k]]->neutral(),
                   (v+step).segment(index, dof), reducedCollisionJacobianPlus.middleCols(index, dof));
 
               // Jacobian at v - step
               hybridSolver.explicitSolver().freeDers().transpose().lview(full_v) = v - step;
 
-              splines[collIndices[k]]->rowParameters(full_v.segment
-                  (collIndices[k]*Spline::NbCoeffs*robot_->numberDof(), Spline::NbCoeffs*robot_->numberDof()));
-              splines[collIndices[k]]->at (splines[collIndices[k]]->timeRange().first,
-                  stateConfiguration.segment(collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+              splines[this->collIndices[k]]->rowParameters(full_v.segment
+                  (this->collIndices[k]*Spline::NbCoeffs*robot_->numberDof(), Spline::NbCoeffs*robot_->numberDof()));
+              splines[this->collIndices[k]]->at (splines[this->collIndices[k]]->timeRange().first,
+                  stateConfiguration.segment(this->collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
               hybridSolver.explicitSolver().solve(stateConfiguration);
 
-              collFunctions[k]->jacobian(collisionJacobianMinus.middleCols(collIndices[k]
+              this->collFunctions[k]->jacobian(collisionJacobianMinus.middleCols(this->collIndices[k]
                     *Spline::NbCoeffs*robot_->numberDof(), robot_->numberDof()),
                     stateConfiguration.segment
-                    (collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+                    (this->collIndices[k]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
               hybridSolver.reduceJacobian(stateConfiguration,
                   collisionJacobianMinus, reducedCollisionJacobianMinus);
 
-              splineSpaces[collIndices[k]]->dIntegrate_dv <false> (splineSpaces[collIndices[k]]->neutral(),
+              splineSpaces[this->collIndices[k]]->dIntegrate_dv <false> (splineSpaces[this->collIndices[k]]->neutral(),
                   (v-step).segment(index, dof), reducedCollisionJacobianMinus.middleCols(index, dof));
 
               collisionHessian.row(i) = (reducedCollisionJacobianPlus.middleCols(index, dof)
-                  - reducedCollisionJacobianMinus.middleCols(index,dof))/(2*stepSize);
+                  - reducedCollisionJacobianMinus.middleCols(index,dof))/(2*this->stepSize);
 
               step[index + i] = 0;
             }
-            hessianStack[nbConstraints + k] = splinesJacobian.transpose() * collisionHessian * splinesJacobian;
+            hessianStack[this->nbConstraints + k] = splinesJacobian.transpose() * collisionHessian * splinesJacobian;
           }
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getJacobianFiniteDiff
-        (const vector_t x, Splines_t& splines, matrixOut_t jacobian, const value_type stepSize,
-         HybridSolver& hybridSolver, size_type nbConstraints,
-         const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
-         const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
-         const std::vector<value_type>& collTimes) const
+        (const vector_t x, Splines_t& splines, matrixOut_t jacobian, HybridSolver& hybridSolver) const
         {
           vector_t value(jacobian.rows());
           vector_t valuePlus(jacobian.rows());
@@ -942,24 +932,24 @@ namespace hpp {
           getConstraintsValue(x, splines, value, hybridSolver);
           for (std::size_t i = 0; i < step.size(); ++i)
           {
-            step[i] = stepSize;
-            getConstraintsValue(x+step, splines, valuePlus.topRows(nbConstraints), hybridSolver);
-            getCollisionConstraintsValue(x+step, splines, valuePlus.bottomRows(valuePlus.size() - nbConstraints),
-                hybridSolver, collFunctions, collValues, collIndices, collTimes);
+            step[i] = this->stepSize;
+            getConstraintsValue(x+step, splines, valuePlus.topRows(this->nbConstraints), hybridSolver);
+            getCollisionConstraintsValue(x+step, splines, valuePlus,
+                hybridSolver);
 
-            getConstraintsValue(x-step, splines, valueMinus.topRows(nbConstraints), hybridSolver);
-            getCollisionConstraintsValue(x-step, splines, valueMinus.bottomRows(valuePlus.size() - nbConstraints),
-                hybridSolver, collFunctions, collValues, collIndices, collTimes);
-            jacobian.col(i) = (valuePlus - valueMinus)/(2*stepSize);
+            getConstraintsValue(x-step, splines, valueMinus.topRows(this->nbConstraints), hybridSolver);
+            getCollisionConstraintsValue(x-step, splines, valueMinus,
+                hybridSolver);
+            jacobian.col(i) = (valuePlus - valueMinus)/(2*this->stepSize);
             step[i] = 0;
           }
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getHessianFiniteDiff
-        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
+        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
          HybridSolver& hybridSolver, const std::vector<size_type>& dofPerSpline,
-         const size_type nbConstraints, const LiegroupSpacePtr_t stateSpace) const
+         const LiegroupSpacePtr_t stateSpace) const
         {
           vector_t step(x.size());
           step.setZero();
@@ -967,41 +957,27 @@ namespace hpp {
           matrix_t jacobianStep(hessianStack.size(), step.size());
           matrix_t jacobianDiff(hessianStack.size(), step.size());
           vector_t tmpValue (hessianStack.size());
-          getConstraintsValueJacobian(x, splines, tmpValue.topRows(nbConstraints),
+          getConstraintsValueJacobian(x, splines, tmpValue.topRows(this->nbConstraints),
               jacobian, dofPerSpline, hybridSolver, stateSpace);
           for (std::size_t i = 0; i < step.size(); ++i)
           {
-            step[i] = stepSize;
-            getConstraintsValueJacobian(x + step, splines, tmpValue.topRows(nbConstraints),
+            step[i] = this->stepSize;
+            getConstraintsValueJacobian(x + step, splines, tmpValue.topRows(this->nbConstraints),
                 jacobianStep, dofPerSpline, hybridSolver, stateSpace);
             step[i] = 0;
-            jacobianDiff = (jacobianStep - jacobian)/stepSize;
+            jacobianDiff = (jacobianStep - jacobian)/(this->stepSize);
             for (std::size_t k = 0; k < hessianStack.size(); ++k)
             {
               hessianStack[k].row(i) = jacobianDiff.row(k);
             }
           }
-          /*
-          for (std::size_t k = 0; k < hessianStack.size(); ++k)
-          {
-            hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
-            hppDout(info, "Hessian " << k << "\n" << hessianStack[k]);
-          }
-          */
         }
 
       template <int _PB, int _SO>
         void SplineGradientBasedConstraint<_PB, _SO>::getHessianDoubleFiniteDiff
-        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
-         HybridSolver hybridSolver, const size_type nbConstraints,
-         const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
-         const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const
+        (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
+         HybridSolver hybridSolver) const
         {
-          std::vector<matrix_t> hessianStackCopy;
-          for (std::size_t k = 0; k < hessianStack.size(); ++k)
-          {
-            hessianStackCopy.push_back(hessianStack[k].eval());
-          }
           vector_t valuePlusPlus(hessianStack.size());
           vector_t valuePlusMinus(hessianStack.size());
           vector_t valueMinusPlus(hessianStack.size());
@@ -1014,53 +990,33 @@ namespace hpp {
           for (std::size_t i = 0; i < step.size(); ++i)
           {
             hppDout(info, i << "|" << step.size());
-            step[i] = stepSize;
+            step[i] = this->stepSize;
             for (std::size_t j = 0; j < step.size(); ++j)
             {
-              step2[j] = stepSize;
+              step2[j] = this->stepSize;
 
-              //getConstraintsValue(x+step+step2, splines, valuePlusPlus.topRows(nbConstraints), hybridSolver);
+              getConstraintsValue(x+step+step2, splines, valuePlusPlus.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue(x+step+step2, splines,
-                  valuePlusPlus.bottomRows(valuePlusPlus.size() - nbConstraints),
-                  hybridSolver, collFunctions, collValues, collIndices, collTimes);
+                  valuePlusPlus, hybridSolver);
 
-              //getConstraintsValue(x+step-step2, splines, valuePlusMinus.topRows(nbConstraints), hybridSolver);
+              getConstraintsValue(x+step-step2, splines, valuePlusMinus.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue(x+step-step2, splines,
-                  valuePlusMinus.bottomRows(valuePlusMinus.size() - nbConstraints),
-                  hybridSolver, collFunctions, collValues, collIndices, collTimes);
+                  valuePlusMinus, hybridSolver);
 
-              //getConstraintsValue(x-step+step2, splines, valueMinusPlus.topRows(nbConstraints), hybridSolver);
+              getConstraintsValue(x-step+step2, splines, valueMinusPlus.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue(x-step+step2, splines,
-                  valuePlusMinus.bottomRows(valuePlusMinus.size() - nbConstraints),
-                  hybridSolver, collFunctions, collValues, collIndices, collTimes);
+                  valuePlusMinus, hybridSolver);
 
-              //getConstraintsValue(x-step-step2, splines, valueMinusMinus.topRows(nbConstraints), hybridSolver);
+              getConstraintsValue(x-step-step2, splines, valueMinusMinus.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue(x-step-step2, splines,
-                  valuePlusMinus.bottomRows(valuePlusMinus.size() - nbConstraints),
-                  hybridSolver, collFunctions, collValues, collIndices, collTimes);
+                  valuePlusMinus, hybridSolver);
 
-              d2f = (valuePlusPlus - valuePlusMinus - valueMinusPlus + valueMinusMinus)/(4*stepSize*stepSize);
-              for (std::size_t k = nbConstraints; k < hessianStack.size(); ++k)
-              {
-                if (hessianStack[k](i,j) - d2f[k] > 1e-5) {
-                  hppDout(info, i << " " << j << " " << k);
-                  hppDout(info, hessianStackCopy[k](i,j));
-                  hppDout(info, hessianStackCopy[k](i,j) << " " << d2f[k]);
-                }
+              d2f = (valuePlusPlus - valuePlusMinus - valueMinusPlus + valueMinusMinus)/(4*std::pow(this->stepSize), 2);
+              for (std::size_t k = this->nbConstraints; k < hessianStack.size(); ++k)
                 hessianStack[k](i,j) = d2f[k];
-              }
               step2[j] = 0;
             }
             step[i] = 0;
-          }
-          for (std::size_t k = nbConstraints; k < hessianStack.size(); ++k)
-          {
-            hppDout(info, (hessianStack[k] - hessianStackCopy[k]).norm());
-            hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
-            hppDout(info, (hessianStackCopy[k] - hessianStackCopy[k].transpose()).norm());
-            hessianStack[k] = (hessianStack[k].array().abs() < 1e-6).select(0, hessianStack[k]);
-            hppDout(info, "\n" << hessianStack[k]);
-            hppDout(info, "\n" << hessianStackCopy[k]);
           }
         }
 
@@ -1115,8 +1071,8 @@ namespace hpp {
               "SplineGradientBasedConstraint/checkJointBound", true);
           bool checkCollisions = problem().getParameter(
               "SplineGradientBasedConstraint/checkCollisions", true);
-          value_type stepSize = problem().getParameter(
-              "SplineGradientBasedConstraint/stepSize", 1e-2);
+          this->stepSize = problem().getParameter(
+              "SplineGradientBasedConstraint/stepSize", 1e-6);
           value_type trustRadius = problem().getParameter(
               "SplineGradientBasedConstraint/trustRadius", 1);
           value_type stepThreshold = problem().getParameter(
@@ -1161,12 +1117,11 @@ namespace hpp {
           std::vector<size_type> dofPerSpline(splines.size(), rDof);
           std::vector<size_type> argPerSpline(splines.size(), robot_->configSize());
           LinearConstraint linearConstraints(nDers, 0);
-          size_type nbConstraints;
           std::vector<size_type> constraintSplineIndex;
           std::vector<size_type> constraintOutputSize;
           std::vector<value_type> errorThreshold;
           addProblemConstraints(splines, hybridSolver, linearConstraints,
-              dofPerSpline, argPerSpline, nbConstraints, constraintSplineIndex,
+              dofPerSpline, argPerSpline, constraintSplineIndex,
               constraintOutputSize, errorThreshold);
 
           std::vector<LiegroupSpacePtr_t> splineSpaces (splines.size());
@@ -1190,13 +1145,6 @@ namespace hpp {
           vector_t costLinear(reducedParameters.size());
           value_type costConstant(reducedParameters.size());
           costFunction(splines, linearConstraints, dofPerSpline, costQuadratic, costLinear, costConstant);
-
-          {
-            Eigen::SelfAdjointEigenSolver<matrix_t> eigenSolver(costQuadratic);
-            vector_t dd = eigenSolver.eigenvalues();
-            hppDout(info, dd.transpose());
-            hppDout(info, "Condition number: " << dd[dd.size()-1]/dd[0]);
-          }
 
           LinearConstraint boundConstraint (nDers, 0);
           if (checkJointBound) {
@@ -1253,14 +1201,14 @@ namespace hpp {
 
           std::vector<size_type> activeBoundIndices;
 
-          vector_t value(nbConstraints);
-          matrix_t jacobian(nbConstraints, freeParameters.size());
-          matrix_t reducedJacobian(nbConstraints, reducedParameters.size());
+          vector_t value(this->nbConstraints);
+          matrix_t jacobian(this->nbConstraints, freeParameters.size());
+          matrix_t reducedJacobian(this->nbConstraints, reducedParameters.size());
           jacobian.setZero();
 
           matrix_t zeroMatrix(freeParameters.size(), freeParameters.size());
           zeroMatrix.setZero();
-          std::vector<matrix_t> hessianStack(nbConstraints, zeroMatrix);
+          std::vector<matrix_t> hessianStack(this->nbConstraints, zeroMatrix);
           matrix_t hessian(reducedParameters.size(), reducedParameters.size());
           matrix_t hessianCorrection(freeParameters.size(), freeParameters.size());
 
@@ -1272,12 +1220,6 @@ namespace hpp {
           vector_t newParameters (reducedParameters.size());
           value_type lengthSinceLastCheck = 0;
 
-          std::vector<DifferentiableFunctionPtr_t> collFunctions;
-          std::vector<value_type> collValues;
-          std::vector<size_type> collIndices;
-          std::vector<value_type> collTimes;
-
-
           size_type nbIterations = 0;
           while (!this->interrupt_)
           {
@@ -1285,42 +1227,14 @@ namespace hpp {
             hppDout(info, "Iteration: " << nbIterations);
             // Get constraints jacobian
             freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
-            getConstraintsValueJacobian(freeParameters, splines, value.topRows(nbConstraints),
-                jacobian.topRows(nbConstraints), dofPerSpline, hybridSolver, stateSpace);
-            getCollisionConstraintsValueJacobian(freeParameters, splines, value.bottomRows(value.size()-nbConstraints),
-                jacobian.bottomRows(value.size()-nbConstraints), hybridSolver, dofPerSpline, splineSpaces,
-                collFunctions, collValues, collIndices, collTimes);
+            getConstraintsValueJacobian(freeParameters, splines, value.topRows(this->nbConstraints),
+                jacobian.topRows(this->nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+            getCollisionConstraintsValueJacobian(freeParameters, splines, value,
+                jacobian, hybridSolver, dofPerSpline, splineSpaces);
 
             reducedJacobian = jacobian * linearConstraints.PK;
 
-            /*
-            matrix_t finiteDiffJacobian (jacobian.rows(), jacobian.cols());
-            getJacobianFiniteDiff (freeParameters, splines, finiteDiffJacobian, stepSize, hybridSolver, nbConstraints,
-                collFunctions, collValues, collIndices, collTimes);
-            hppDout(info, (jacobian - finiteDiffJacobian).norm());
-
-            if ((jacobian - finiteDiffJacobian).norm() > 1e-2)
-            {
-              hppDout(info, "\n" << jacobian);
-              finiteDiffJacobian = (finiteDiffJacobian.array().abs() < 1e-4).select(0, finiteDiffJacobian);
-              hppDout(info, "\n" << finiteDiffJacobian);
-              matrix_t M = jacobian - finiteDiffJacobian;
-              M = (M.array().abs() < 1e-4).select(0, M);
-              hppDout(info, "\n" << M);
-            }
-
-            if (jacobian.rows() > nbConstraints) {
-              hppDout(info, "\n" << jacobian);
-              finiteDiffJacobian = (finiteDiffJacobian.array().abs() < 1e-4).select(0, finiteDiffJacobian);
-              hppDout(info, "\n" << finiteDiffJacobian);
-              matrix_t M = jacobian - finiteDiffJacobian;
-              M = (M.array().abs() < 1e-4).select(0, M);
-              hppDout(info, "\n" << M);
-            }
-            */
-
             hppDout(info, "Constraint error: " << value.norm());
-            hppDout(info, value.segment(nbConstraints, collFunctions.size()));
             hppDout(info, "Cost: " << (.5*reducedParameters.transpose() * (costQuadratic * reducedParameters)
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             // Correct constraints error
@@ -1350,31 +1264,15 @@ namespace hpp {
               jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
 
-              hppDout(info, "Getting hessians...");
               freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
-              getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline, stepSize,
-                  hybridSolver, stateSpace, nbConstraints, constraintSplineIndex);
-              getCollisionConstraintsHessians(freeParameters, splines, hessianStack, dofPerSpline, stepSize,
-                  hybridSolver, splineSpaces, nbConstraints, collFunctions, collValues, collIndices, collTimes);
+              getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline,
+                  hybridSolver, stateSpace, constraintSplineIndex);
+              getCollisionConstraintsHessians(freeParameters, splines, hessianStack, dofPerSpline,
+                  hybridSolver, splineSpaces);
 
               HPP_DISPLAY_TIMECOUNTER(SGB_hessianJacobians);
               HPP_DISPLAY_TIMECOUNTER(SGB_hessianAssignment);
               HPP_DISPLAY_TIMECOUNTER(SGB_hessian);
-
-              for (std::size_t k = 0; k < nbConstraints; ++k)
-              {
-                if ((hessianStack[k] - hessianStack[k].transpose()).norm() > 1e-3) {
-                  hppDout(info, k);
-                  hppDout(info, (hessianStack[k] - hessianStack[k].transpose()).norm());
-                  hppDout(info, "\n" << (hessianStack[k] - hessianStack[k].transpose())/2);
-                  hessianStack[k] = (hessianStack[k] + hessianStack[k].transpose())/2;
-                }
-              }
-              //getHessianFiniteDiff(freeParameters, splines, hessianStack, stepSize,
-                  //hybridSolver, dofPerSpline, nbConstraints, stateSpace);
-              //getHessianDoubleFiniteDiff(freeParameters, splines, hessianStack, stepSize, hybridSolver,
-                  //nbConstraints, collFunctions, collValues, collIndices, collTimes);
-              hppDout(info, "Done!");
 
               hppDout(info, "Testing hessian approximation");
               vector_t freeParametersStep (freeParameters.size());
@@ -1382,17 +1280,14 @@ namespace hpp {
               freeParametersStep *= 1e-2 / freeParametersStep.norm();
               vector_t tmpValue (value.size());
               getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * reducedParameters,
-                  splines, value.topRows(nbConstraints), hybridSolver);
+                  splines, value.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
-                  reducedParameters, splines, value.bottomRows(collFunctions.size()), hybridSolver,
-                  collFunctions, collValues, collIndices, collTimes);
+                  reducedParameters, splines, value, hybridSolver);
               getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * reducedParameters + freeParametersStep,
-                  splines, tmpValue, hybridSolver);
+                  splines, tmpValue.topRows(this->nbConstraints), hybridSolver);
               getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
-                  (reducedParameters + freeParametersStep), splines, tmpValue.bottomRows(collFunctions.size()),
-                  hybridSolver, collFunctions, collValues, collIndices, collTimes);
+                  (reducedParameters + freeParametersStep), splines, tmpValue, hybridSolver);
               vector_t ddv(value.size());
-              hppDout(info, nbConstraints << " " << value.size() << " " << hessianStack.size());
               for (std::size_t k = 0; k < hessianStack.size(); ++k)
               {
                 ddv.row(k) = .5 * freeParametersStep.transpose() * hessianStack[k] * freeParametersStep;
@@ -1461,46 +1356,19 @@ namespace hpp {
                 vector_t tmpValue = value;
 
                 getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * (reducedParameters + step),
-                    splines, value.topRows(nbConstraints), hybridSolver);
+                    splines, value.topRows(this->nbConstraints), hybridSolver);
                 getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
-                    (reducedParameters + step), splines, value.bottomRows(collFunctions.size()), hybridSolver,
-                    collFunctions, collValues, collIndices, collTimes);
+                    (reducedParameters + step), splines, value, hybridSolver);
 
                 getConstraintsValue(linearConstraints.xStar +
                     linearConstraints.PK * (reducedParameters + jacobianConstraint.PK * solution),
-                    splines, tmpValue.topRows(nbConstraints), hybridSolver);
+                    splines, tmpValue.topRows(this->nbConstraints), hybridSolver);
                 getCollisionConstraintsValue(linearConstraints.xStar + linearConstraints.PK *
                     (reducedParameters + jacobianConstraint.PK * solution), splines,
-                    tmpValue.bottomRows(collFunctions.size()), hybridSolver,
-                    collFunctions, collValues, collIndices, collTimes);
+                    tmpValue, hybridSolver);
 
                 hppDout(info, "First order error: " << tmpValue.norm());
                 hppDout(info, "Second order error: " << value.norm());
-
-                {
-                  hppDout(info, "<<<<<<<<<<<<<");
-                  vector_t sstep = step;
-                  sstep += getSecondOrderCorrection(sstep,
-                      reducedJacobian, hessianStack, inverseGram, linearConstraints.PK);
-                  vector_t value1 = value;
-                  vector_t value2 = tmpValue;
-
-                  getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * (reducedParameters + sstep),
-                      splines, value1.topRows(nbConstraints), hybridSolver);
-                  getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
-                      (reducedParameters + sstep), splines, value1.bottomRows(collFunctions.size()), hybridSolver,
-                       collFunctions, collValues, collIndices, collTimes);
-
-                  getCollisionConstraintsValue(linearConstraints.xStar + linearConstraints.PK *
-                      (reducedParameters + jacobianConstraint.PK * solution), splines,
-                      value2.bottomRows(collFunctions.size()), hybridSolver,
-                      collFunctions, collValues, collIndices, collTimes);
-                  hppDout(info, value1.norm() << " " << errorRelativeToThreshold
-                      (value1, constraintOutputSize, errorThreshold));
-                  hppDout(info, value2.norm() << " " << errorRelativeToThreshold
-                      (value2, constraintOutputSize, errorThreshold));
-                  hppDout(info, ">>>>>>>>>>>>>");
-                }
 
                 value_type costDifference = ((reducedParameters + .5*step).transpose() * (costQuadratic * step)
                     + costLinear.transpose() * step)(0, 0);

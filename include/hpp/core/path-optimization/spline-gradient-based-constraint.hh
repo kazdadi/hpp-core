@@ -82,8 +82,9 @@ namespace hpp {
           virtual void addProblemConstraints (const Splines_t splines,
               HybridSolver& hybridSolver, LinearConstraint& constraint,
               std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
-              size_type& nbConstraints, std::vector<size_type>& constraintSplineIndex,
-              std::vector<size_type>& constraintOutputSize, std::vector<value_type>& errorThreshold) const;
+              std::vector<size_type>& constraintSplineIndex,
+              std::vector<size_type>& constraintOutputSize,
+              std::vector<value_type>& errorThreshold) const;
 
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
@@ -101,7 +102,12 @@ namespace hpp {
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
 
-          size_type getNbConstraints(const Splines_t splines) const;
+          size_type nbConstraints;
+          value_type stepSize;
+          std::vector<DifferentiableFunctionPtr_t> collFunctions;
+          std::vector<value_type> collValues;
+          std::vector<size_type> collIndices;
+          std::vector<value_type> collTimes;
 
           /// Solve subproblem for constrained QP
           value_type solveSubSubProblem(vector_t c, vector_t k, value_type r, value_type error = std::pow(10, -8)) const;
@@ -109,30 +115,21 @@ namespace hpp {
           /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
           vector_t solveQP(matrix_t& A, vector_t b, value_type r) const;
 
-          /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
-          vector_t solveInequalityQP(matrix_t& H, vector_t& b, matrix_t& Ai, vector_t& bi, value_type r) const;
-
           void getHessianFiniteDiff (const vector_t x, Splines_t& splines,
               std::vector<matrix_t>& hessianStack, const value_type stepSize, HybridSolver& hybridSolver,
-              const std::vector<size_type>& dofPerSpline, const size_type nbConstraints,
-              const LiegroupSpacePtr_t stateSpace) const;
+              const std::vector<size_type>& dofPerSpline, const LiegroupSpacePtr_t stateSpace) const;
 
           void getFullSplines (const vector_t reducedParams, Splines_t& fullSplines,
               HybridSolver hybridSolver) const;
 
           void addCollisionConstraint(Splines_t collisionFreeSplines, Splines_t collisionSplines,
-              std::pair<CollisionPathValidationReportPtr_t, std::size_t> collisionReport,
-              std::vector<DifferentiableFunctionPtr_t>& collFunctions, std::vector<value_type>& collValues,
-              std::vector<size_type>& collIndices, std::vector<value_type>& collTimes) const;
+              std::pair<CollisionPathValidationReportPtr_t, std::size_t> collisionReport) const;
 
           void getConstraintsValue(const vector_t x, Splines_t& splines, vectorOut_t value,
               HybridSolver& hybridSolver) const;
 
-          void getCollisionConstraintsValue (
-              const vector_t x, Splines_t& splines, vectorOut_t value, HybridSolver& hybridSolver,
-              const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
-              const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
-              const std::vector<value_type>& collTimes) const;
+          void getCollisionConstraintsValue (const vector_t x, Splines_t& splines,
+              vectorOut_t value, HybridSolver& hybridSolver) const;
 
           void getConstraintsValueJacobian(const vector_t x, Splines_t& splines, vectorOut_t value,
               matrixOut_t jacobian, const std::vector<size_type>& dofPerSpline,
@@ -140,40 +137,29 @@ namespace hpp {
 
           void getCollisionConstraintsValueJacobian (const vector_t x, Splines_t& splines, vectorOut_t value,
               matrixOut_t jacobian, HybridSolver& hybridSolver, const std::vector<size_type>& dofPerSpline,
-              const std::vector<LiegroupSpacePtr_t>& splineSpaces,
-              const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
-              const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
-              const std::vector<value_type>& collTimes) const;
+              const std::vector<LiegroupSpacePtr_t>& splineSpaces) const;
 
           void getConstraintsHessian (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
               const std::vector<size_type>& dofPerSpline, const value_type stepSize,
-              HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace, size_type nbConstraints,
+              HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace,
               const std::vector<size_type>& constraintSplineIndex) const;
 
-          void getCollisionConstraintsHessians
-            (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack,
-             const std::vector<size_type>& dofPerSpline, const value_type stepSize,
-             HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces, size_type nbConstraints,
-             const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
-             const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const;
+          void getCollisionConstraintsHessians (const vector_t x, Splines_t& splines,
+              std::vector<matrix_t>& hessianStack, const std::vector<size_type>& dofPerSpline,
+              HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces) const;
 
-          void getJacobianFiniteDiff
-            (const vector_t x, Splines_t& splines, matrixOut_t jacobian,
-             const value_type stepSize, HybridSolver& hybridSolver, size_type nbConstraints,
-             const std::vector<DifferentiableFunctionPtr_t>& collFunctions,
-             const std::vector<value_type>& collValues, const std::vector<size_type>& collIndices,
-             const std::vector<value_type>& collTimes) const;
+          void getJacobianFiniteDiff (const vector_t x, Splines_t& splines,
+              matrixOut_t jacobian, const value_type stepSize, HybridSolver& hybridSolver) const;
 
-          void getHessianDoubleFiniteDiff
-            (const vector_t x, Splines_t& splines, std::vector<matrix_t>& hessianStack, const value_type stepSize,
-             HybridSolver hybridSolver, const size_type nbConstraints,
-             const std::vector<DifferentiableFunctionPtr_t>& collFunctions, const std::vector<value_type>& collValues,
-             const std::vector<size_type>& collIndices, const std::vector<value_type>& collTimes) const;
+          void getHessianDoubleFiniteDiff (const vector_t x, Splines_t& splines,
+              std::vector<matrix_t>& hessianStack, const value_type stepSize,
+              HybridSolver hybridSolver) const;
 
           vector_t getSecondOrderCorrection (const vector_t step, const matrix_t& jacobian,
               const std::vector<matrix_t>& hessianStack, const matrix_t& inverseGram, const matrix_t& PK) const;
 
-          value_type errorRelativeToThreshold (const vector_t& value, const std::vector<size_type>& constraintOutputSize,
+          value_type errorRelativeToThreshold (const vector_t& value,
+              const std::vector<size_type>& constraintOutputSize,
               const std::vector<value_type>& errorThreshold) const;
 
           /// \todo static
