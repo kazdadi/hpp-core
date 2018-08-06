@@ -1372,8 +1372,7 @@ namespace hpp {
 
                 value_type costDifference = ((reducedParameters + .5*step).transpose() * (costQuadratic * step)
                     + costLinear.transpose() * step)(0, 0);
-                if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) > 1
-                    or costDifference > 0) {
+                if (value.norm() > 1e-2 or costDifference > 0) {
                   trustRadius *= .5;
                   radiusLimitReached = true;
                   continue;
