@@ -888,8 +888,6 @@ namespace hpp {
           vector_t value(jacobian.rows());
           vector_t valuePlus(jacobian.rows());
           vector_t valueMinus(jacobian.rows());
-          vector_t fullParameters(hybridSolver.explicitSolver().derSize());
-          fullParameters.setZero();
 
           vector_t step(x.size());
           step.setZero();
