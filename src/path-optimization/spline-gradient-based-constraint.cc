@@ -581,7 +581,7 @@ namespace hpp {
             splines[this->collIndices[i]]->at (this->collTimes[i],
                 stateConfiguration.segment(this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
             hybridSolver.explicitSolver().solve(stateConfiguration);
-            value.row(i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
+            value.row(this->nbConstraints+i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
                  (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
             value[this->nbConstraints+i] -= this->collValues[i];
           }
@@ -674,10 +674,11 @@ namespace hpp {
             size_type dof = dofPerSpline[this->collIndices[i]];
 
             splines[this->collIndices[i]]->at (this->collTimes[i],
-                stateConfiguration.segment(this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
+                stateConfiguration.segment(this->collIndices[i]*
+                  Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
             hybridSolver.explicitSolver().solve(stateConfiguration);
 
-            value.row(i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
+            value.row(this->nbConstraints+i) = ((*(this->collFunctions[i])) (stateConfiguration.segment
                  (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()))).vector();
             value[this->nbConstraints+i] -= this->collValues[i];
 
