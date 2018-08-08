@@ -574,6 +574,7 @@ namespace hpp {
         void SplineGradientBasedConstraint<_PB, _SO>::getCollisionConstraintsValue
         (const vector_t x, Splines_t& splines, vectorOut_t value, HybridSolver& hybridSolver) const
         {
+          getFullSplines(x, splines, hybridSolver);
           vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
           stateConfiguration.setZero();
           for (std::size_t i = 0; i < this->collFunctions.size(); ++i)
@@ -1195,6 +1196,7 @@ namespace hpp {
             reducedJacobian = jacobian * linearConstraints.PK;
 
             hppDout(info, "Constraint error: " << value.norm());
+            hppDout(info, value.transpose());
             hppDout(info, "Cost: " << (.5*reducedParameters.transpose() * (costQuadratic * reducedParameters)
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             // Correct constraints error
@@ -1315,7 +1317,8 @@ namespace hpp {
 
                 value_type costDifference = ((reducedParameters + .5*step).transpose() * (costQuadratic * step)
                     + costLinear.transpose() * step)(0, 0);
-                if (value.norm() > 1e-2 or costDifference > 0) {
+                if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) > 1
+                    or costDifference > 0) {
                   trustRadius *= .5;
                   radiusLimitReached = true;
                   continue;
@@ -1331,8 +1334,7 @@ namespace hpp {
                   or nbIterations == maxIterations;
                 if (optimumReached) step.setZero();
 
-                lengthSinceLastCheck += step.norm();
-                if (checkCollisions and (lengthSinceLastCheck >= collisionCheckThreshold or optimumReached))
+                if (checkCollisions and (lengthSinceLastCheck+step.norm() >= collisionCheckThreshold or optimumReached))
                 {
                   hppDout(info, "Collision check...");
                   getFullSplines(linearConstraints.xStar + linearConstraints.PK*(reducedParameters + step),
@@ -1397,8 +1399,9 @@ namespace hpp {
                     }
                   }
                 }
-                else if (not checkCollisions)
+                else
                 {
+                  lengthSinceLastCheck += step.norm();
                   newParameters = reducedParameters + step;
                   break;
                 }
