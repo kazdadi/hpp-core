@@ -1157,6 +1157,10 @@ namespace hpp {
           if (checkCollisions) {
             if (!(this->validatePath(splines, true)).empty())
               throw std::invalid_argument("Input path contains a collision");
+            this->collFunctions.clear();
+            this->collValues.clear();
+            this->collTimes.clear();
+            this->collIndices.clear();
           }
 
 
@@ -1209,7 +1213,7 @@ namespace hpp {
             hppDout(info, "Newton correction norm: " << correction.norm());
 
             bool optimumReached = false;
-            if (value.norm() < 1e-3)
+            if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
             {
               jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
@@ -1225,9 +1229,10 @@ namespace hpp {
               HPP_DISPLAY_TIMECOUNTER(SGB_hessian);
 
               hppDout(info, "Testing hessian approximation");
-              vector_t freeParametersStep (freeParameters.size());
-              freeParametersStep.Random();
+              vector_t freeParametersStep = vector_t::Random(freeParameters.size());
+              hppDout(info, freeParametersStep.transpose());
               freeParametersStep *= 1e-2 / freeParametersStep.norm();
+
               vector_t tmpValue (value.size());
               getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * reducedParameters,
                   splines, value.topRows(this->nbConstraints), hybridSolver);
@@ -1345,7 +1350,8 @@ namespace hpp {
                     radiusLimitReached = true;
                   continue;
                 }
-                optimumReached = (step.norm() < stepThreshold and value.norm() < 1e-5)
+                optimumReached = (step.norm() < stepThreshold and
+                    errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
                   or nbIterations == maxIterations;
                 if (optimumReached) step.setZero();
 
@@ -1376,8 +1382,8 @@ namespace hpp {
                       jacobian.row(jacobian.rows()-1).setZero();
                       reducedJacobian.row(jacobian.rows()-1).setZero();
                       value[value.size()-1] = 0;
-                      lengthSinceLastCheck = 0;
                     }
+                    lengthSinceLastCheck = 0;
                     break;
                   }
                   else
@@ -1409,7 +1415,6 @@ namespace hpp {
                           collisionSplines, hybridSolver);
                       collisionReports = reports;
                       trustRadius = solution.norm()/2;
-                      lengthSinceLastCheck -= step.norm();
                       continue;
                     }
                   }
