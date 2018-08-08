@@ -1194,6 +1194,7 @@ namespace hpp {
             reducedJacobian = jacobian * linearConstraints.PK;
 
             hppDout(info, "Constraint error: " << value.norm());
+            hppDout(info, "Constraint error infty norm: " << errorRelativeToThreshold(value, constraintOutputSize, errorThreshold));
             hppDout(info, value.transpose());
             hppDout(info, "Cost: " << (.5*reducedParameters.transpose() * (costQuadratic * reducedParameters)
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
@@ -1205,6 +1206,7 @@ namespace hpp {
 
             vector_t correction = reducedJacobian.colPivHouseholderQr().solve(-value);
             reducedParameters += correction;
+            hppDout(info, "Newton correction norm: " << correction.norm());
 
             bool optimumReached = false;
             if (value.norm() < 1e-3)
@@ -1242,9 +1244,15 @@ namespace hpp {
               }
               hppDout(info, (tmpValue - value).norm());
               hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).norm());
-              hppDout(info,(tmpValue - (value + jacobian * freeParametersStep + ddv)).norm());
+              hppDout(info, (tmpValue - (value + jacobian * freeParametersStep + ddv)).norm());
+              hppDout(info, (tmpValue - value).transpose());
               hppDout(info, (tmpValue - (value + jacobian * freeParametersStep)).transpose());
               hppDout(info, (tmpValue - (value + jacobian * freeParametersStep + ddv)).transpose());
+
+              hppDout(info, "\n" << (tmpValue - (value + jacobian * freeParametersStep)).
+                  cwiseQuotient(tmpValue - value).transpose());
+              hppDout(info, "\n" << (tmpValue - (value + jacobian * freeParametersStep + ddv)).
+                  cwiseQuotient(tmpValue - (value + jacobian * freeParametersStep)).transpose());
               hppDout(info, "Testing done");
 
               Eigen::JacobiSVD<matrix_t> svd(reducedJacobian.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
@@ -1285,6 +1293,7 @@ namespace hpp {
 
               while (true)
               {
+                hppDout(info, "Distance since last check: " << lengthSinceLastCheck);
                 hppDout(info, "Trust radius: " << trustRadius);
                 // TODO: reuse SVD
                 vector_t solution = solveQP (projectedHessian,
@@ -1313,9 +1322,17 @@ namespace hpp {
                 hppDout(info, "First order error: " << tmpValue.norm());
                 hppDout(info, "Second order error: " << value.norm());
 
+                hppDout(info, "First order error infty norm: "
+                    << errorRelativeToThreshold(tmpValue, constraintOutputSize, errorThreshold));
+                hppDout(info, "Second order error infty norm: "
+                    << errorRelativeToThreshold(value, constraintOutputSize, errorThreshold));
+
                 value_type costDifference = ((reducedParameters + .5*step).transpose() * (costQuadratic * step)
                     + costLinear.transpose() * step)(0, 0);
-                if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) > 1
+                hppDout(info, "Cost difference: " << costDifference);
+                if (step.norm() < trustRadius*.9) radiusLimitReached = true;
+
+                if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) > 100
                     or costDifference > 0) {
                   trustRadius *= .5;
                   radiusLimitReached = true;
@@ -1349,8 +1366,8 @@ namespace hpp {
                           newSplines, hybridSolver);
                       addCollisionConstraint(newSplines, collisionSplines, collisionReports[0]);
                       constraintOutputSize.push_back(1);
-                      errorThreshold.push_back(collValues[collValues.size()-1]*5e-3);
-                      hppDout(info, collValues[collValues.size()-1]*5e-3);
+                      errorThreshold.push_back(this->collValues[this->collValues.size()-1]*1e-3);
+                      hppDout(info, this->collValues[this->collValues.size()-1]*1e-3);
 
                       hessianStack.push_back(zeroMatrix);
                       jacobian.conservativeResize(jacobian.rows() + 1, Eigen::NoChange);
@@ -1375,8 +1392,8 @@ namespace hpp {
                           collisionSplines, hybridSolver);
                       addCollisionConstraint(newSplines, collisionSplines, reports[0]);
                       constraintOutputSize.push_back(1);
-                      errorThreshold.push_back(collValues[collValues.size()-1]*5e-3);
-                      hppDout(info, collValues[collValues.size()-1]*5e-3);
+                      errorThreshold.push_back(this->collValues[this->collValues.size()-1]*1e-3);
+                      hppDout(info, this->collValues[this->collValues.size()-1]*1e-3);
 
                       hessianStack.push_back(zeroMatrix);
                       jacobian.conservativeResize(jacobian.rows() + 1, Eigen::NoChange);
