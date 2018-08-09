@@ -1117,17 +1117,14 @@ namespace hpp {
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
             matrix_t boundConstraintFree = hybridSolver.explicitSolver().freeDers().rview(boundConstraint.J);
+
             Eigen::RowBlockIndices nonZeroRows;
             for (std::size_t i = 0; i < boundConstraintFree.rows(); ++i) {
-              if (not boundConstraintFree.row(i).isZero(1e-10))
+              if (not boundConstraintFree.row(i).isZero(1e-8))
                 nonZeroRows.addRow(i, 1);
             }
-
-            boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
-            boundConstraintReduced.b = boundConstraint.b - boundConstraintFree * linearConstraints.xStar;
-
-            boundConstraintReduced.J = nonZeroRows.rview(boundConstraintReduced.J).eval();
-            boundConstraintReduced.b = nonZeroRows.rview(boundConstraintReduced.b).eval();
+            boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
+            vector_t boundConstraintFreeRhs = nonZeroRows.rview(boundConstraint.b).eval();
 
             nonZeroRows.clearRows();
             if (MaxContinuityOrder == 0)
@@ -1137,23 +1134,34 @@ namespace hpp {
               size_type row = 0;
               while (i < splines.size())
               {
-                if (boundConstraintFree.row(row).middleCols(index, dofPerSpline[i]).isZero(1e-5)) {
+                if (boundConstraintFree.row(row).middleCols(index, 2*dofPerSpline[i]).isZero(1e-8)) {
                   index += 2*dofPerSpline[i];
                   ++i;
                 }
                 else
                 {
-                  nonZeroRows.addRow(row, 1);
+                  if (i >= 1 and boundConstraintFree.row(row).middleCols
+                      (index + dofPerSpline[i], dofPerSpline[i]).isZero(1e-8))
+                    nonZeroRows.addRow(row, 1);
                   ++row;
                 }
               }
+              nonZeroRows.updateRows<true, true, true>();
             }
             else if (MaxContinuityOrder == 1)
             {
             }
 
-            std::vector<size_type> activeBoundIndices;
+            boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
+            boundConstraintFreeRhs = nonZeroRows.rview(boundConstraintFreeRhs).eval();
+            boundConstraintReduced.J.resize(boundConstraintFree.rows(), Eigen::NoChange);
+            boundConstraintReduced.b.resize(boundConstraintFree.rows(), Eigen::NoChange);
+            boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
+            boundConstraintReduced.b = boundConstraintFreeRhs - boundConstraintFree * linearConstraints.xStar;
+            while(true){}
           }
+          std::vector<size_type> activeBoundIndices;
+
           if (checkCollisions) {
             if (!(this->validatePath(splines, true)).empty())
               throw std::invalid_argument("Input path contains a collision");
@@ -1179,7 +1187,7 @@ namespace hpp {
           Splines_t newSplines;
           Base::copy (splines, collisionSplines);
           Base::copy (splines, newSplines);
-          vector_t collisionFreeParameters (reducedParameters.size());
+          vector_t collisionFreeParameters = reducedParameters;
           vector_t newParameters (reducedParameters.size());
           value_type lengthSinceLastCheck = 0;
 
