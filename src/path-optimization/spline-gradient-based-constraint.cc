@@ -392,6 +392,57 @@ namespace hpp {
         }
 
       template <int _PB, int _SO>
+        void SplineGradientBasedConstraint<_PB, _SO>::processInequalityConstraints
+        (const LinearConstraint& boundConstraint, LinearConstraint& boundConstraintReduced,
+         const Splines_t& splines, const HybridSolver& hybridSolver,
+         const LinearConstraint& linearConstraints, const std::vector<size_type>& dofPerSpline) const
+        {
+          int MaxContinuityOrder = int( (SplineOrder - 1) / 2);
+          matrix_t boundConstraintFree = hybridSolver.explicitSolver().freeDers().rview(boundConstraint.J);
+
+          Eigen::RowBlockIndices nonZeroRows;
+          for (std::size_t i = 0; i < boundConstraintFree.rows(); ++i) {
+            if (not boundConstraintFree.row(i).isZero(1e-8))
+              nonZeroRows.addRow(i, 1);
+          }
+          boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
+          vector_t boundConstraintFreeRhs = nonZeroRows.rview(boundConstraint.b).eval();
+
+          nonZeroRows.clearRows();
+          if (MaxContinuityOrder == 0)
+          {
+            size_type i = 0;
+            size_type index = 0;
+            size_type row = 0;
+            while (i < splines.size())
+            {
+              if (boundConstraintFree.row(row).middleCols(index, 2*dofPerSpline[i]).isZero(1e-8)) {
+                index += 2*dofPerSpline[i];
+                ++i;
+              }
+              else
+              {
+                if (i >= 1 and boundConstraintFree.row(row).middleCols
+                    (index + dofPerSpline[i], dofPerSpline[i]).isZero(1e-8))
+                  nonZeroRows.addRow(row, 1);
+                ++row;
+              }
+            }
+            nonZeroRows.updateRows<true, true, true>();
+          }
+          else if (MaxContinuityOrder == 1)
+          {
+          }
+
+          boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
+          boundConstraintFreeRhs = nonZeroRows.rview(boundConstraintFreeRhs).eval();
+          boundConstraintReduced.J.resize(boundConstraintFree.rows(), Eigen::NoChange);
+          boundConstraintReduced.b.resize(boundConstraintFree.rows(), Eigen::NoChange);
+          boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
+          boundConstraintReduced.b = boundConstraintFreeRhs - boundConstraintFree * linearConstraints.xStar;
+        }
+
+      template <int _PB, int _SO>
         LiegroupSpacePtr_t SplineGradientBasedConstraint<_PB, _SO>::createProblemLieGroup
         (std::vector<LiegroupSpacePtr_t>& splineSpaces, const Splines_t splines, const HybridSolver hybridSolver) const
         {
@@ -1109,58 +1160,17 @@ namespace hpp {
           value_type costConstant(reducedParameters.size());
           costFunction(splines, linearConstraints, dofPerSpline, costQuadratic, costLinear, costConstant);
 
+          std::vector<size_type> activeBoundIndices;
           LinearConstraint boundConstraint (nDers, 0);
-          LinearConstraint boundConstraintReduced (reducedParameters.size(), boundConstraint.J.rows());
+          LinearConstraint boundConstraintReduced (reducedParameters.size(), 0);
           if (checkJointBound)
           {
             this->jointBoundConstraint(splines, boundConstraint);
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
-            matrix_t boundConstraintFree = hybridSolver.explicitSolver().freeDers().rview(boundConstraint.J);
-
-            Eigen::RowBlockIndices nonZeroRows;
-            for (std::size_t i = 0; i < boundConstraintFree.rows(); ++i) {
-              if (not boundConstraintFree.row(i).isZero(1e-8))
-                nonZeroRows.addRow(i, 1);
-            }
-            boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
-            vector_t boundConstraintFreeRhs = nonZeroRows.rview(boundConstraint.b).eval();
-
-            nonZeroRows.clearRows();
-            if (MaxContinuityOrder == 0)
-            {
-              size_type i = 0;
-              size_type index = 0;
-              size_type row = 0;
-              while (i < splines.size())
-              {
-                if (boundConstraintFree.row(row).middleCols(index, 2*dofPerSpline[i]).isZero(1e-8)) {
-                  index += 2*dofPerSpline[i];
-                  ++i;
-                }
-                else
-                {
-                  if (i >= 1 and boundConstraintFree.row(row).middleCols
-                      (index + dofPerSpline[i], dofPerSpline[i]).isZero(1e-8))
-                    nonZeroRows.addRow(row, 1);
-                  ++row;
-                }
-              }
-              nonZeroRows.updateRows<true, true, true>();
-            }
-            else if (MaxContinuityOrder == 1)
-            {
-            }
-
-            boundConstraintFree = nonZeroRows.rview(boundConstraintFree).eval();
-            boundConstraintFreeRhs = nonZeroRows.rview(boundConstraintFreeRhs).eval();
-            boundConstraintReduced.J.resize(boundConstraintFree.rows(), Eigen::NoChange);
-            boundConstraintReduced.b.resize(boundConstraintFree.rows(), Eigen::NoChange);
-            boundConstraintReduced.J = boundConstraintFree * linearConstraints.PK;
-            boundConstraintReduced.b = boundConstraintFreeRhs - boundConstraintFree * linearConstraints.xStar;
-            while(true){}
+            processInequalityConstraints(boundConstraint, boundConstraintReduced,
+                splines, hybridSolver, linearConstraints, dofPerSpline);
           }
-          std::vector<size_type> activeBoundIndices;
 
           if (checkCollisions) {
             if (!(this->validatePath(splines, true)).empty())

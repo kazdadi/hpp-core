@@ -78,6 +78,20 @@ namespace hpp {
 
           SplineGradientBasedConstraint (const Problem& problem);
 
+        private:
+          size_type nbConstraints;
+          value_type stepSize;
+          std::vector<DifferentiableFunctionPtr_t> collFunctions;
+          std::vector<value_type> collValues;
+          std::vector<size_t> collIndices;
+          std::vector<value_type> collTimes;
+
+          typedef std::vector <std::pair <CollisionPathValidationReportPtr_t,
+                  std::size_t> > Reports_t;
+          struct CollisionFunctions;
+
+          template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
+
           // Constraint creation
           virtual void addProblemConstraints (const Splines_t splines,
               HybridSolver& hybridSolver, LinearConstraint& constraint,
@@ -89,25 +103,16 @@ namespace hpp {
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
 
+          void processInequalityConstraints (const LinearConstraint& boundConstraint,
+              LinearConstraint& boundConstraintReduced, const Splines_t& splines,
+              const HybridSolver& hybridSolver, const LinearConstraint& linearConstraints,
+              const std::vector<size_type>& dofPerSpline) const;
+
           LiegroupSpacePtr_t createProblemLieGroup(std::vector<LiegroupSpacePtr_t>& splineSpaces,
               const Splines_t splines, const HybridSolver hybridSolver) const;
 
           void costFunction (const Splines_t splines, const LinearConstraint& linearConstraints,
               std::vector<size_type> dofPerSpline, matrix_t& hessian, vector_t& gradientAtZero, value_type& valueAtZero) const;
-
-        private:
-          typedef std::vector <std::pair <CollisionPathValidationReportPtr_t,
-                  std::size_t> > Reports_t;
-          struct CollisionFunctions;
-
-          template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
-
-          size_type nbConstraints;
-          value_type stepSize;
-          std::vector<DifferentiableFunctionPtr_t> collFunctions;
-          std::vector<value_type> collValues;
-          std::vector<size_t> collIndices;
-          std::vector<value_type> collTimes;
 
           /// Solve subproblem for constrained QP
           value_type solveSubSubProblem(vector_t c, vector_t k, value_type r, value_type error = std::pow(10, -8)) const;
