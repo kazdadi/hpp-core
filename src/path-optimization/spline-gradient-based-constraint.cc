@@ -1269,8 +1269,43 @@ namespace hpp {
             bool optimumReached = false;
             if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
             {
-              jacobianConstraint.decompose(false);
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
+
+              // Compute new active set
+              if (checkJointBound and activeInequalities.nbRows() > 0)
+              {
+                hppDout(info, activeInequalities);
+                vector_t optimalDirection = vector_t::Zero(gradient.size());
+                Eigen::VectorXi activeSet (reducedJacobian.rows() + activeInequalities.nbRows());
+                activeSet.setZero();
+                int activeSetSize = 0;
+                matrix_t identity = matrix_t::Identity (reducedParameters.size(), reducedParameters.size());
+                vector_t equalityRhs = vector_t::Zero(reducedJacobian.rows());
+                matrix_t activeInequalityMatrix = activeInequalities.rview(boundConstraintReduced.J).eval();
+                vector_t inequalityRhs = vector_t::Zero(activeInequalityMatrix.rows());
+                solve_quadprog(identity, gradient, reducedJacobian.transpose(), equalityRhs,
+                    activeInequalityMatrix.transpose(), inequalityRhs,
+                    optimalDirection, activeSet, activeSetSize);
+                activeInequalities.clearRows();
+                for (std::size_t k = 0; k < activeInequalityMatrix.rows(); ++k)
+                {
+                  if (activeSet[reducedJacobian.rows() + k] == 0
+                      and (k+1 == activeInequalityMatrix.rows() or
+                        activeSet[reducedJacobian.rows() + k+1] == 0))
+                    break;
+                  else
+                    activeInequalities.addRow(activeSet[reducedJacobian.rows() + k], 1);
+                }
+              }
+
+              LinearConstraint jacobianConstraint
+                (reducedJacobian.cols() + activeInequalities.nbRows(), reducedJacobian.rows());
+              jacobianConstraint.J.topRows(reducedJacobian.rows()) = reducedJacobian;
+              jacobianConstraint.J.bottomRows(activeInequalities.nbRows()) =
+
+              activeInequalities.rview(boundConstraintReduced.J).eval();
+
+              jacobianConstraint.decompose(false);
 
               freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
               getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline,
