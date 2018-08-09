@@ -1160,7 +1160,7 @@ namespace hpp {
           value_type costConstant(reducedParameters.size());
           costFunction(splines, linearConstraints, dofPerSpline, costQuadratic, costLinear, costConstant);
 
-          std::vector<size_type> activeBoundIndices;
+          Eigen::RowBlockIndices activeInequalities;
           LinearConstraint boundConstraint (nDers, 0);
           LinearConstraint boundConstraintReduced (reducedParameters.size(), 0);
           if (checkJointBound)
@@ -1168,8 +1168,16 @@ namespace hpp {
             this->jointBoundConstraint(splines, boundConstraint);
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
+            // Remove redundant inequalities
             processInequalityConstraints(boundConstraint, boundConstraintReduced,
                 splines, hybridSolver, linearConstraints, dofPerSpline);
+          }
+          // Compute initial active set
+          activeInequalities.clearRows();
+          for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
+          {
+            if (std::abs(boundConstraintReduced.J.row(k) * reducedParameters
+                  - boundConstraintReduced.b[k]) < 1e-8) activeInequalities.addRow(k, 1);
           }
 
           if (checkCollisions) {
@@ -1222,11 +1230,39 @@ namespace hpp {
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
             // Correct constraints error
 
-            LinearConstraint jacobianConstraint (reducedJacobian.cols(), reducedJacobian.rows());
-            jacobianConstraint.J = reducedJacobian;
-            jacobianConstraint.b = jacobianConstraint.J*reducedParameters - value;
+            vector_t correction (reducedParameters.size());
+            correction.setZero();
+            if (checkJointBound)
+            {
+              Eigen::VectorXi activeSet (reducedJacobian.rows() + boundConstraintReduced.J.rows());
+              int activeSetSize = 0;
+              activeSet.setZero();
+              // TODO: Define once
+              matrix_t identity = matrix_t::Identity (reducedParameters.size(), reducedParameters.size());
+              vector_t zero = vector_t::Zero (reducedParameters.size());
+              vector_t rhs = boundConstraintReduced.b - boundConstraintReduced.J * reducedParameters;
+              // TODO: Active set is ambiguous
+              // [-1 -2 0 0 0]: Is inequality constraint 0 active?
+              // TODO: Set active inequalities as equalities?
+              solve_quadprog (identity, zero, reducedJacobian.transpose(), value,
+                  boundConstraintReduced.J.transpose(), -rhs,
+                  correction, activeSet, activeSetSize);
+              activeInequalities.clearRows();
+              for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
+              {
+                if (activeSet[reducedJacobian.rows() + k] == 0
+                    and activeSet[reducedJacobian.rows() + k+1] == 0)
+                  break;
+                else
+                  activeInequalities.addRow(activeSet[reducedJacobian.rows() + k], 1);
+              }
+              hppDout(info, activeInequalities);
+            }
+            else
+            {
+              correction = reducedJacobian.colPivHouseholderQr().solve(-value);
+            }
 
-            vector_t correction = reducedJacobian.colPivHouseholderQr().solve(-value);
             reducedParameters += correction;
             hppDout(info, "Newton correction norm: " << correction.norm());
 
