@@ -322,7 +322,7 @@ namespace hpp {
           hybridSolver.explicitSolverHasChanged();
         }
 
-      bool contains (const size_type index, const segments_t segments)
+      bool contains (const size_type index, const segments_t& segments)
       {
         for (std::size_t i = 0; i < segments.size(); ++i)
         {
@@ -697,7 +697,7 @@ namespace hpp {
           matrix_t initialEndJacobian = initialEndIndices.rview(jacobian);
           HPP_STOP_TIMECOUNTER(SGB_jacobian3);
           HPP_START_TIMECOUNTER(SGB_jacobian4);
-          stateSpace->dIntegrate_dv <false> (baseElement, initialEndParameters, initialEndJacobian); 
+          stateSpace->dIntegrate_dv <false> (baseElement, initialEndParameters, initialEndJacobian);
           initialEndIndices.lview(jacobian) = initialEndJacobian;
           HPP_STOP_TIMECOUNTER(SGB_jacobian4);
           matrix_t J (hybridSolver.explicitSolver().derSize(), hybridSolver.explicitSolver().derSize());
@@ -1041,7 +1041,7 @@ namespace hpp {
         {
           vector_t secondOrderCorrection(step.size());
           secondOrderCorrection.setZero();
-          for (std::size_t j = 0; j < inverseGram.rows(); ++j)
+          for (std::size_t j = 0; j < hessianStack.size(); ++j)
           {
             vector_t v_j(step.size());
             v_j.setZero();
@@ -1161,6 +1161,7 @@ namespace hpp {
           costFunction(splines, linearConstraints, dofPerSpline, costQuadratic, costLinear, costConstant);
 
           Eigen::RowBlockIndices activeInequalities;
+          Eigen::RowBlockIndices newActiveInequalities;
           LinearConstraint boundConstraint (nDers, 0);
           LinearConstraint boundConstraintReduced (reducedParameters.size(), 0);
           if (checkJointBound)
@@ -1257,27 +1258,52 @@ namespace hpp {
                   activeInequalities.addRow(activeSet[reducedJacobian.rows() + k], 1);
               }
               hppDout(info, activeInequalities);
+              hppDout(info, activeInequalities.rview(boundConstraintReduced.J).eval()
+                  * (reducedParameters+correction)
+                  - activeInequalities.rview(boundConstraintReduced.b).eval());
+
+              // FIXME: QP active set
+              activeInequalities.clearRows();
+              for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
+              {
+                if (std::abs((boundConstraintReduced.J.row(k)*(reducedParameters+correction)
+                        - boundConstraintReduced.b[k])) < 1e-7)
+                  activeInequalities.addRow(k, 1);
+                else if ((boundConstraintReduced.J.row(k)*(reducedParameters+correction)
+                      - boundConstraintReduced.b[k]) < 0)
+                {
+                  hppDout(info, k << (boundConstraintReduced.J.row(k)*(reducedParameters
+                          +correction) - boundConstraintReduced.b[k]));
+                  activeInequalities.addRow(k, 1);
+                }
+              }
             }
             else
             {
               correction = reducedJacobian.colPivHouseholderQr().solve(-value);
             }
-
-            reducedParameters += correction;
             hppDout(info, "Newton correction norm: " << correction.norm());
 
+            reducedParameters += correction;
+
+            getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * reducedParameters,
+                splines, value.topRows(this->nbConstraints), hybridSolver);
+            getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
+                reducedParameters, splines, value, hybridSolver);
             bool optimumReached = false;
-            if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
+            if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1
+                and correction.norm() < .05)
             {
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
 
               // Compute new active set
+              // FIXME: QP active set?
               if (checkJointBound and activeInequalities.nbRows() > 0)
               {
-                hppDout(info, activeInequalities);
+                segments_t activeRows = activeInequalities.rows();
+
                 vector_t optimalDirection = vector_t::Zero(gradient.size());
-                Eigen::VectorXi activeSet (reducedJacobian.rows() + activeInequalities.nbRows());
-                activeSet.setZero();
+                Eigen::VectorXi activeSet = -Eigen::VectorXi::Ones(reducedJacobian.rows() + activeInequalities.nbRows());
                 int activeSetSize = 0;
                 matrix_t identity = matrix_t::Identity (reducedParameters.size(), reducedParameters.size());
                 vector_t equalityRhs = vector_t::Zero(reducedJacobian.rows());
@@ -1286,24 +1312,37 @@ namespace hpp {
                 solve_quadprog(identity, gradient, reducedJacobian.transpose(), equalityRhs,
                     activeInequalityMatrix.transpose(), inequalityRhs,
                     optimalDirection, activeSet, activeSetSize);
-                activeInequalities.clearRows();
+                newActiveInequalities.clearRows();
+
+                size_type segmentIndex = 0;
+                size_type addendIndex = 0;
+                size_type totalIndex = 0;
                 for (std::size_t k = 0; k < activeInequalityMatrix.rows(); ++k)
                 {
-                  if (activeSet[reducedJacobian.rows() + k] == 0
-                      and (k+1 == activeInequalityMatrix.rows() or
-                        activeSet[reducedJacobian.rows() + k+1] == 0))
-                    break;
+                  if (activeSet[reducedJacobian.rows() + k] != -1)
+                  {
+                    while (totalIndex < activeSet[reducedJacobian.rows() + k])
+                    {
+                      ++totalIndex;
+                      ++addendIndex;
+                      if (addendIndex == activeRows[segmentIndex].second)
+                      {
+                        addendIndex = 0;
+                        ++segmentIndex;
+                      }
+                    }
+                    newActiveInequalities.addRow(activeRows[segmentIndex].first + addendIndex, 1);
+                  }
                   else
-                    activeInequalities.addRow(activeSet[reducedJacobian.rows() + k], 1);
+                    break;
                 }
               }
 
               LinearConstraint jacobianConstraint
-                (reducedJacobian.cols() + activeInequalities.nbRows(), reducedJacobian.rows());
+                (reducedJacobian.cols(), reducedJacobian.rows() + newActiveInequalities.nbRows());
               jacobianConstraint.J.topRows(reducedJacobian.rows()) = reducedJacobian;
-              jacobianConstraint.J.bottomRows(activeInequalities.nbRows()) =
-
-              activeInequalities.rview(boundConstraintReduced.J).eval();
+              jacobianConstraint.J.bottomRows(newActiveInequalities.nbRows()) =
+                newActiveInequalities.rview(boundConstraintReduced.J).eval();
 
               jacobianConstraint.decompose(false);
 
@@ -1349,7 +1388,7 @@ namespace hpp {
                   cwiseQuotient(tmpValue - (value + jacobian * freeParametersStep)).transpose());
               hppDout(info, "Testing done");
 
-              Eigen::JacobiSVD<matrix_t> svd(reducedJacobian.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
+              Eigen::JacobiSVD<matrix_t> svd(jacobianConstraint.J.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
               hppDout(info, svd.singularValues().transpose().reverse());
               vector_t pseudoInverse = svd.singularValues().cwiseInverse().cwiseAbs2();
 
@@ -1371,7 +1410,7 @@ namespace hpp {
               {
                 value_type coeff = 0;
                 for (std::size_t j = 0; j < hessianStack.size(); ++j) {
-                  coeff += gradient.dot(reducedJacobian.row(i)) * inverseGram.coeff(i, j);
+                  coeff += gradient.dot(jacobianConstraint.J.row(i)) * inverseGram.coeff(i, j);
                 }
                 hessianCorrection -= coeff * hessianStack[i];
               }
@@ -1394,11 +1433,86 @@ namespace hpp {
                     -jacobianConstraint.PK.transpose() * gradient, trustRadius);
 
                 step = jacobianConstraint.PK * solution;
+                vector_t correction2nd = getSecondOrderCorrection(step,
+                    jacobianConstraint.J, hessianStack, inverseGram, linearConstraints.PK);
+
                 hppDout(info, "Step: " << solution.norm());
-                hppDout(info, "Correction term: " << getSecondOrderCorrection(step,
-                    reducedJacobian, hessianStack, inverseGram, linearConstraints.PK).norm());
-                step += getSecondOrderCorrection(step,
-                    reducedJacobian, hessianStack, inverseGram, linearConstraints.PK);
+                hppDout(info, "Correction term: " << correction2nd.norm());
+
+                value_type t = 1.0;
+                if (checkJointBound)
+                {
+                  std::vector<bool> isActive (boundConstraintReduced.J.rows(), false);
+                  std::vector<bool> isSemiActive (boundConstraintReduced.J.rows(), false);
+                  std::vector<bool> isInactive (boundConstraintReduced.J.rows(), true);
+
+                  segments_t activeRowSegments = newActiveInequalities.rows();
+                  segments_t semiActiveRowSegments = activeInequalities.rows();
+
+                  for (std::size_t i = 0; i < activeRowSegments.size(); ++i)
+                  {
+                    for (std::size_t j = 0; j < activeRowSegments[i].second; ++j)
+                    {
+                      size_type index = activeRowSegments[i].first + j;
+                      isActive[index] = true;
+                    }
+                  }
+
+                  for (std::size_t i = 0; i < semiActiveRowSegments.size(); ++i)
+                  {
+                    for (std::size_t j = 0; j < semiActiveRowSegments[i].second; ++j)
+                    {
+                      size_type index = semiActiveRowSegments[i].first + j;
+                      isSemiActive[index] = not isActive[index];
+                      isInactive[index] = false;
+                    }
+                  }
+
+                  vector_t a = boundConstraintReduced.J * correction2nd;
+                  vector_t b = boundConstraintReduced.J * step;
+                  vector_t c = boundConstraintReduced.J * reducedParameters
+                    - boundConstraintReduced.b;
+
+                  value_type tt = 0;
+                  bool failure = false;
+                  for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
+                  {
+                    if (isActive[k]) continue;
+                    if (isSemiActive[k])
+                    {
+                      if (b[k] <= 0) {
+                        trustRadius *= .5;
+                        radiusLimitReached = true;
+                        failure = true;
+                        break;
+                      }
+                      if (a[k] >= 0) continue;
+                      if (a[k] < 0) {
+                        t = std::min(t, -b[k]/a[k]);
+                        continue;
+                      }
+                    }
+                    // if isInactive[k]
+                    // TODO: Remove this
+                    if (c[k] < 0) {
+                      hppDout(info, c);
+                      hppDout(info, k << " " << c[k]);
+                      hppDout(info, "Unexpected state");
+                      while (!this->interrupt_) {}
+                    }
+                    //
+                    if (std::pow(b[k], 2) - 4*a[k]*c[k] >= 0) {
+                      if (a[k] == 0) tt = -c[k]/b[k];
+                      else tt = (-b[k] - std::sqrt(std::pow(b[k], 2) - 4*a[k]*c[k]))/(2*a[k]);
+                      if (tt > 0) t = std::min(t, tt);
+                    }
+                  }
+                  if (failure) continue;
+                }
+
+                hppDout(info, "t*: " << t);
+                step = t*step + std::pow(t, 2)*correction2nd;
+
                 vector_t tmpValue = value;
 
                 getConstraintsValue(linearConstraints.xStar + linearConstraints.PK * (reducedParameters + step),
@@ -1439,8 +1553,9 @@ namespace hpp {
                     radiusLimitReached = true;
                   continue;
                 }
-                optimumReached = (step.norm() < stepThreshold and
-                    errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
+                optimumReached = (t >= .9
+                    and step.norm() < stepThreshold
+                    and errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1)
                   or nbIterations == maxIterations;
                 if (optimumReached) step.setZero();
 
