@@ -55,13 +55,6 @@ namespace hpp {
       HPP_DEFINE_TIMECOUNTER(SGB_hessianJacobians);
       HPP_DEFINE_TIMECOUNTER(SGB_hessianAssignment);
       HPP_DEFINE_TIMECOUNTER(SGB_hessian);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian1);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian21);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian22);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian23);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian24);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian3);
-      HPP_DEFINE_TIMECOUNTER(SGB_jacobian4);
 
       template <int NbRows>
         VectorMap_t reshape (Eigen::Matrix<value_type, NbRows, Eigen::Dynamic, Eigen::RowMajor>& parameters)
@@ -645,7 +638,6 @@ namespace hpp {
          const std::vector<size_type>& dofPerSpline,
          HybridSolver& hybridSolver, const LiegroupSpacePtr_t stateSpace) const
         {
-          HPP_START_TIMECOUNTER(SGB_jacobian1);
           getFullSplines(x, splines, hybridSolver);
           vector_t stateConfiguration(splines.size() * Spline::NbCoeffs * robot_->configSize());
           vector_t baseConfiguration(splines.size() * 2 * robot_->configSize());
@@ -666,21 +658,10 @@ namespace hpp {
           }
 
           hybridSolver.explicitSolver().solve(stateConfiguration);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian1);
-          HPP_START_TIMECOUNTER(SGB_jacobian21);
           hybridSolver.computeValue<true>(stateConfiguration);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian21);
-          HPP_START_TIMECOUNTER(SGB_jacobian22);
           hybridSolver.updateJacobian(stateConfiguration);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian22);
-          HPP_START_TIMECOUNTER(SGB_jacobian23);
           hybridSolver.getValue(value);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian23);
-          HPP_START_TIMECOUNTER(SGB_jacobian24);
           hybridSolver.getReducedJacobian(jacobian);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian24);
-
-          HPP_START_TIMECOUNTER(SGB_jacobian3);
 
           Eigen::ColBlockIndices initialEndIndices;
           size_type index = 0;
@@ -695,11 +676,8 @@ namespace hpp {
 
           LiegroupElement baseElement(hybridSolver.explicitSolver().freeArgs().rview(baseConfiguration), stateSpace);
           matrix_t initialEndJacobian = initialEndIndices.rview(jacobian);
-          HPP_STOP_TIMECOUNTER(SGB_jacobian3);
-          HPP_START_TIMECOUNTER(SGB_jacobian4);
           stateSpace->dIntegrate_dv <false> (baseElement, initialEndParameters, initialEndJacobian);
           initialEndIndices.lview(jacobian) = initialEndJacobian;
-          HPP_STOP_TIMECOUNTER(SGB_jacobian4);
           matrix_t J (hybridSolver.explicitSolver().derSize(), hybridSolver.explicitSolver().derSize());
           hybridSolver.explicitSolver().jacobian(J, stateConfiguration);
         }
@@ -1107,7 +1085,7 @@ namespace hpp {
           robot_->controlComputation ((Device::Computation_t)(robot_->computationFlag() | Device::JACOBIAN));
           const size_type rDof = robot_->numberDof();
 
-          // 1
+          // 1 - Transform into splines
           Splines_t splines;
           this->appendEquivalentSpline (input, splines);
           if (returnEquivalentSpline) {
@@ -1118,7 +1096,7 @@ namespace hpp {
           size_type nArgs = nParameters * robot_->configSize();
           size_type nDers = nParameters * rDof;
 
-          // 2
+          // 2 - Add continuity constraints
           enum { MaxContinuityOrder = int( (SplineOrder - 1) / 2) };
           const size_type orderContinuity = MaxContinuityOrder;
 
@@ -1134,6 +1112,7 @@ namespace hpp {
           std::vector<size_type> constraintSplineIndex;
           std::vector<size_type> constraintOutputSize;
           std::vector<value_type> errorThreshold;
+
           addProblemConstraints(splines, hybridSolver, linearConstraints,
               dofPerSpline, argPerSpline, constraintSplineIndex,
               constraintOutputSize, errorThreshold);
@@ -1141,6 +1120,8 @@ namespace hpp {
           std::vector<LiegroupSpacePtr_t> splineSpaces (splines.size());
           LiegroupSpacePtr_t stateSpace = createProblemLieGroup(splineSpaces, splines, hybridSolver);
 
+          // 3 - Add continuity constraints to hybrid solver
+          // TODO:priority:2: Non-linear constraints
           processContinuityConstraints(splines, hybridSolver, continuityConstraints, linearConstraints);
 
           vector_t fullParameters(nParameters*rDof);
@@ -1151,10 +1132,10 @@ namespace hpp {
           linearConstraints.decompose();
           vector_t reducedParameters = linearConstraints.PK.transpose() * (freeParameters - linearConstraints.xStar);
 
-          // 3
-          // Cost value is: 1/2 x^T Q x + L^T x + C
-          // Cost gradient is: Qx + L
-          // where x = reducedParameters
+          // 4 - Cost function
+          // Cost value: 1/2 x^T Q x + L^T x + C,
+          // Cost gradient: Qx + L,
+          // where x := reducedParameters
           matrix_t costQuadratic(reducedParameters.size(), reducedParameters.size());
           vector_t costLinear(reducedParameters.size());
           value_type costConstant(reducedParameters.size());
@@ -1170,6 +1151,7 @@ namespace hpp {
             if (!this->validateBounds(splines, boundConstraint).empty())
               throw std::invalid_argument("Input path does not satisfy joint bounds");
             // Remove redundant inequalities
+            // TODO:priority:1: Handle spline orders 3/5
             processInequalityConstraints(boundConstraint, boundConstraintReduced,
                 splines, hybridSolver, linearConstraints, dofPerSpline);
           }
@@ -1190,7 +1172,7 @@ namespace hpp {
             this->collIndices.clear();
           }
 
-
+          // Initialize matrices
           vector_t value(this->nbConstraints);
           matrix_t jacobian(this->nbConstraints, freeParameters.size());
           matrix_t reducedJacobian(this->nbConstraints, reducedParameters.size());
@@ -1219,6 +1201,9 @@ namespace hpp {
             freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
             getConstraintsValueJacobian(freeParameters, splines, value.topRows(this->nbConstraints),
                 jacobian.topRows(this->nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+            // FIXME:priority:0: Collision constraints will sometimes return the wrong jacobians
+            // See ./src/path-optimization/spline-gradient-based/collision-constraint.hh:
+            // impl_jacobian => f_->jacobian
             getCollisionConstraintsValueJacobian(freeParameters, splines, value,
                 jacobian, hybridSolver, dofPerSpline, splineSpaces);
 
@@ -1229,25 +1214,27 @@ namespace hpp {
             hppDout(info, value.transpose());
             hppDout(info, "Cost: " << (.5*reducedParameters.transpose() * (costQuadratic * reducedParameters)
                   + costLinear.transpose() * reducedParameters)(0, 0) + costConstant);
-            // Correct constraints error
 
+            // Correct constraints error
             vector_t correction (reducedParameters.size());
             correction.setZero();
+            // Inequality case: Solve quadratic program f(x) + J*correction = 0, s.t. A(x+correction) >= b
             if (checkJointBound)
             {
               Eigen::VectorXi activeSet (reducedJacobian.rows() + boundConstraintReduced.J.rows());
               int activeSetSize = 0;
               activeSet.setZero();
-              // TODO: Define once
+
+              // TODO:priority:4 Define once
               matrix_t identity = matrix_t::Identity (reducedParameters.size(), reducedParameters.size());
               vector_t zero = vector_t::Zero (reducedParameters.size());
               vector_t rhs = boundConstraintReduced.b - boundConstraintReduced.J * reducedParameters;
-              // TODO: Active set is ambiguous
+              // FIXME? Active set is ambiguous
               // [-1 -2 0 0 0]: Is inequality constraint 0 active?
-              // TODO: Set active inequalities as equalities?
               solve_quadprog (identity, zero, reducedJacobian.transpose(), value,
                   boundConstraintReduced.J.transpose(), -rhs,
                   correction, activeSet, activeSetSize);
+              // TODO:priority:3 Get active set from QP
               activeInequalities.clearRows();
               for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
               {
@@ -1262,7 +1249,7 @@ namespace hpp {
                   * (reducedParameters+correction)
                   - activeInequalities.rview(boundConstraintReduced.b).eval());
 
-              // FIXME: QP active set
+              // FIXME:priority:2: Band-aid fix for active set
               activeInequalities.clearRows();
               for (std::size_t k = 0; k < boundConstraintReduced.J.rows(); ++k)
               {
@@ -1278,6 +1265,7 @@ namespace hpp {
                 }
               }
             }
+            // Equality only: Least squares solution f(x) + J*correction = 0
             else
             {
               correction = reducedJacobian.colPivHouseholderQr().solve(-value);
@@ -1291,13 +1279,19 @@ namespace hpp {
             getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
                 reducedParameters, splines, value, hybridSolver);
             bool optimumReached = false;
+
+            // If constraint error is small enough, proceed with the optimization
+            // Otherwise, skip and keep projecting
             if (errorRelativeToThreshold(value, constraintOutputSize, errorThreshold) < .1
                 and correction.norm() < .05)
             {
               vector_t gradient = costQuadratic * reducedParameters + costLinear;
 
               // Compute new active set
-              // FIXME: QP active set?
+              // Project direction of steepest descent on local admissible set (eq. and active ineq. constraints)
+              // Constraints that are active in that direction are
+              // set as equality constraints (stored inside newActiveInequalities)
+              // FIXME: See QP issues above
               if (checkJointBound and activeInequalities.nbRows() > 0)
               {
                 segments_t activeRows = activeInequalities.rows();
@@ -1343,20 +1337,21 @@ namespace hpp {
               jacobianConstraint.J.topRows(reducedJacobian.rows()) = reducedJacobian;
               jacobianConstraint.J.bottomRows(newActiveInequalities.nbRows()) =
                 newActiveInequalities.rview(boundConstraintReduced.J).eval();
-
               jacobianConstraint.decompose(false);
 
               freeParameters = linearConstraints.xStar + linearConstraints.PK * reducedParameters;
+              getConstraintsValueJacobian(freeParameters, splines, value.topRows(this->nbConstraints),
+                  jacobian.topRows(this->nbConstraints), dofPerSpline, hybridSolver, stateSpace);
+              getCollisionConstraintsValueJacobian(freeParameters, splines, value,
+                  jacobian, hybridSolver, dofPerSpline, splineSpaces);
+
               getConstraintsHessian(freeParameters, splines, hessianStack, dofPerSpline,
                   hybridSolver, stateSpace, constraintSplineIndex);
               getCollisionConstraintsHessians(freeParameters, splines, hessianStack, dofPerSpline,
                   hybridSolver, splineSpaces);
 
-              HPP_DISPLAY_TIMECOUNTER(SGB_hessianJacobians);
-              HPP_DISPLAY_TIMECOUNTER(SGB_hessianAssignment);
-              HPP_DISPLAY_TIMECOUNTER(SGB_hessian);
-
-              hppDout(info, "Testing hessian approximation");
+              // Optional: Test accuracy of derivatives
+              // TODO:priority:5: Test in external function
               vector_t freeParametersStep = vector_t::Random(freeParameters.size());
               hppDout(info, freeParametersStep.transpose());
               freeParametersStep *= 1e-2 / freeParametersStep.norm();
@@ -1386,8 +1381,10 @@ namespace hpp {
                   cwiseQuotient(tmpValue - value).transpose());
               hppDout(info, "\n" << (tmpValue - (value + jacobian * freeParametersStep + ddv)).
                   cwiseQuotient(tmpValue - (value + jacobian * freeParametersStep)).transpose());
-              hppDout(info, "Testing done");
+              // End of test
 
+              // Inverting Gram matrix
+              // TODO:priority:?: Singular/close to singular jacobian case
               Eigen::JacobiSVD<matrix_t> svd(jacobianConstraint.J.transpose(), Eigen::ComputeThinU | Eigen::ComputeFullV);
               hppDout(info, svd.singularValues().transpose().reverse());
               vector_t pseudoInverse = svd.singularValues().cwiseInverse().cwiseAbs2();
@@ -1428,7 +1425,7 @@ namespace hpp {
               {
                 hppDout(info, "Distance since last check: " << lengthSinceLastCheck);
                 hppDout(info, "Trust radius: " << trustRadius);
-                // TODO: reuse SVD
+                // TODO:priority:4 reuse SVD instead of recalculating on each loop
                 vector_t solution = solveQP (projectedHessian,
                     -jacobianConstraint.PK.transpose() * gradient, trustRadius);
 
@@ -1439,6 +1436,9 @@ namespace hpp {
                 hppDout(info, "Step: " << solution.norm());
                 hppDout(info, "Correction term: " << correction2nd.norm());
 
+                // Determine largest t s.t. A(x + t*h + C(t*h)) >= b
+                // by finding when ax^2 + bx + c first hits 0 for x > 0 for the different cases
+                // TODO:priority:4: Write external function
                 value_type t = 1.0;
                 if (checkJointBound)
                 {
@@ -1520,6 +1520,7 @@ namespace hpp {
                 getCollisionConstraintsValue (linearConstraints.xStar + linearConstraints.PK *
                     (reducedParameters + step), splines, value, hybridSolver);
 
+                // For comparison purposes. Otherwise useless
                 getConstraintsValue(linearConstraints.xStar +
                     linearConstraints.PK * (reducedParameters + jacobianConstraint.PK * solution),
                     splines, tmpValue.topRows(this->nbConstraints), hybridSolver);
@@ -1534,7 +1535,9 @@ namespace hpp {
                     << errorRelativeToThreshold(tmpValue, constraintOutputSize, errorThreshold));
                 hppDout(info, "Second order error infty norm: "
                     << errorRelativeToThreshold(value, constraintOutputSize, errorThreshold));
+                // End useless code
 
+                // Adjust trust radius based on results (function decrease, constraints error)
                 value_type costDifference = ((reducedParameters + .5*step).transpose() * (costQuadratic * step)
                     + costLinear.transpose() * step)(0, 0);
                 hppDout(info, "Cost difference: " << costDifference);
@@ -1559,6 +1562,26 @@ namespace hpp {
                   or nbIterations == maxIterations;
                 if (optimumReached) step.setZero();
 
+                // Tests for collisions occasionally (based on distance from last checked point)
+                // If no collision is found: Move to new point
+                // If collision is found: Reduce trust radius and try again
+                // If eventually a collision free trajectory is found:
+                //   add collision constraint between collision free trajectory
+                //   and trajectory in collision from previous attempt
+                // If not, add collision constraint between
+                //   trajectory in collision from last attempt
+                //   last known collision free trajectory
+                //
+                // TODO:priority:4: Possible improvement: Case when last known
+                // collision free trajectory and trajectory in collision from
+                // last attempt are too far away from each other:
+                // Interpolate between the two?
+                //
+                // x(n): Current iteration point
+                // x(n-k): Last known collision free iterate
+                //
+                // Option 1: Interpolate from x(n-k) to x(n)?
+                // Option 2: Interpolate from x(n-k) to x(n-k+1) to ... to x(n-1) to x(n)?
                 if (checkCollisions and (lengthSinceLastCheck+step.norm() >= collisionCheckThreshold or optimumReached))
                 {
                   hppDout(info, "Collision check...");
@@ -1649,25 +1672,7 @@ namespace hpp {
 
               reducedParameters = newParameters;
             }
-            // Get constraints hessians
-            // Add jacobian correction term?
-            // Get cost gradient/hessian
-            // Calculate tangent space and choose subset of constraints to work with if full set is rank deficient
-            // Calculate effective hessian
-            // Solve QP subproblem
-            // Calculate correction term
-            // Check result validity and adjust trust region accordingly
-            // Collision testing (if optimum reached, or sufficient distance crossed since last collision check)
-            // If in collision, add constraint and go back to collision free state
-            // Else, go to new state
           }
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian1);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian21);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian22);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian23);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian24);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian3);
-          HPP_DISPLAY_TIMECOUNTER(SGB_jacobian4);
           getFullSplines(linearConstraints.xStar + linearConstraints.PK * reducedParameters, splines, hybridSolver);
           return this->buildPathVector(splines);
         }

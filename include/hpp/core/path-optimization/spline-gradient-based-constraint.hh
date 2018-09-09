@@ -57,8 +57,8 @@ namespace hpp {
           /// Optimize path
           /// 1 - Transform straight paths into splines
           /// 2 - Add continuity constraints
-          /// 3 - Make cost function
-          /// 4 - Compute explicit representation of linear constraints.
+          /// 3 - Compute explicit representation of linear constraints.
+          /// 4 - Create cost function
           /// 5 :
           ///    1 - Solve first order approximation of equality and active bound constraints
           ///    2 - Project gradient on problem constraints
