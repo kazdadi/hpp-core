@@ -50,7 +50,6 @@ namespace hpp {
 
       HPP_DEFINE_TIMECOUNTER(SGB_constraintDecomposition);
       HPP_DEFINE_TIMECOUNTER(SGB_qpDecomposition);
-      // HPP_DEFINE_TIMECOUNTER(SGB_findNewConstraint);
       HPP_DEFINE_TIMECOUNTER(SGB_qpSolve);
       HPP_DEFINE_TIMECOUNTER(SGB_hessianJacobians);
       HPP_DEFINE_TIMECOUNTER(SGB_hessianAssignment);
@@ -122,7 +121,7 @@ namespace hpp {
               NumericalConstraints_t numericalConstraints = configProjector->numericalConstraints();
               for (std::size_t j = 0; j < numericalConstraints.size(); ++j)
               {
-                // TODO: Mixed comparison type constraints
+                // TODO:priority:2: Mixed comparison type constraints
                 bool equalToZero = numericalConstraints[j]->comparisonType()[0] == constraints::EqualToZero;
 
                 ExplicitNumericalConstraintPtr_t explicitConstraint =
@@ -237,7 +236,7 @@ namespace hpp {
                   }
                   else
                   {
-                    // TODO: Equality (mixed?) type constraints
+                    // TODO:priority:2: Equality (mixed?) type constraints
                   }
                 }
               }
@@ -718,6 +717,10 @@ namespace hpp {
                 stateConfiguration.segment
                  (this->collIndices[i]*Spline::NbCoeffs*robot_->configSize(), robot_->configSize()));
 
+            // FIXME:priority:0: Write reduceJacobian function in HybridSolver class
+            // reduceJacobian (arg, jacobian, reducedJacobian)
+            // returns the jacobian of the function after the explicit constraints are applied
+            // See HybridSolver => getReducedJacobian
             hybridSolver.reduceJacobian(stateConfiguration,
                 collisionJacobian.middleRows(i, 1), jacobian.middleRows(this->nbConstraints+i, 1));
 
@@ -753,7 +756,7 @@ namespace hpp {
          const std::vector<size_type>& constraintSplineIndex) const
         {
           HPP_SCOPE_TIMECOUNTER(SGB_hessian);
-          // TODO: Equality type constraints
+          // TODO:priority:2: Equality type constraints
           size_type maxDof = *std::max_element(dofPerSpline.begin(), dofPerSpline.end());
           std::vector<size_type> splineIndex;
           size_type index = 0;
@@ -1121,7 +1124,6 @@ namespace hpp {
           LiegroupSpacePtr_t stateSpace = createProblemLieGroup(splineSpaces, splines, hybridSolver);
 
           // 3 - Add continuity constraints to hybrid solver
-          // TODO:priority:2: Non-linear constraints
           processContinuityConstraints(splines, hybridSolver, continuityConstraints, linearConstraints);
 
           vector_t fullParameters(nParameters*rDof);
@@ -1493,7 +1495,8 @@ namespace hpp {
                       }
                     }
                     // if isInactive[k]
-                    // TODO: Remove this
+                    // TODO:priority:4: Verify that this does not occur
+                    // i.e., inactive constraints are always strictly satisfied
                     if (c[k] < 0) {
                       hppDout(info, c);
                       hppDout(info, k << " " << c[k]);

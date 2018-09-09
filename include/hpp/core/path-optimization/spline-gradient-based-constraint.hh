@@ -61,7 +61,7 @@ namespace hpp {
           /// 4 - Create cost function
           /// 5 :
           ///    1 - Solve first order approximation of equality and active bound constraints
-          ///    2 - Project gradient on problem constraints
+          ///    2 - Project descent direction on constraints
           ///    3 - Check if optimum is reached
           ///    4 - Check for collisions and add constraints if any are detected
           ///    5 - Check inequality constraints and add them to the active sets if they are violated
@@ -92,7 +92,7 @@ namespace hpp {
 
           template <typename Cost_t> bool checkHessian (const Cost_t& cost, const matrix_t& H, const Splines_t& splines) const;
 
-          // Constraint creation
+          // Create trajectory constraints from configuration constraints
           virtual void addProblemConstraints (const Splines_t splines,
               HybridSolver& hybridSolver, LinearConstraint& constraint,
               std::vector<size_type>& dofPerSpline, std::vector<size_type>& argPerSpline,
@@ -100,14 +100,20 @@ namespace hpp {
               std::vector<size_type>& constraintOutputSize,
               std::vector<value_type>& errorThreshold);
 
+          // Create trajectory continuity constraints
+          // TODO:priority:2-3: Non-linear continuity constraints
           void processContinuityConstraints (const Splines_t splines, HybridSolver hybridSolver,
               LinearConstraint& continuityConstraints, LinearConstraint& linearConstraints) const;
 
+          // Remove redundant constraints
           void processInequalityConstraints (const LinearConstraint& boundConstraint,
               LinearConstraint& boundConstraintReduced, const Splines_t& splines,
               const HybridSolver& hybridSolver, const LinearConstraint& linearConstraints,
               const std::vector<size_type>& dofPerSpline) const;
 
+          // Create trajectory space as concatenation of configuration spaces
+          // Unnecessarily hacky at times (computing Jacobians, Hessians)
+          // TODO:priority:4: Handle configuration spaces individually
           LiegroupSpacePtr_t createProblemLieGroup(std::vector<LiegroupSpacePtr_t>& splineSpaces,
               const Splines_t splines, const HybridSolver hybridSolver) const;
 
@@ -120,6 +126,7 @@ namespace hpp {
           /// Solve min 1/2 xT A x - bT x s.t ||x|| < r
           vector_t solveQP(matrix_t& A, vector_t b, value_type r) const;
 
+          // H_i = finite difference formula of Jacobian of grad(g_i)
           void getHessianFiniteDiff (const vector_t x, Splines_t& splines,
               std::vector<matrix_t>& hessianStack, HybridSolver& hybridSolver,
               const std::vector<size_type>& dofPerSpline, const LiegroupSpacePtr_t stateSpace) const;
@@ -153,9 +160,11 @@ namespace hpp {
               std::vector<matrix_t>& hessianStack, const std::vector<size_type>& dofPerSpline,
               HybridSolver& hybridSolver, const std::vector<LiegroupSpacePtr_t>& splineSpaces) const;
 
+          // J = (dg_i/dx_j), 0 <= i,j < k,n
           void getJacobianFiniteDiff (const vector_t x, Splines_t& splines,
               matrixOut_t jacobian, HybridSolver& hybridSolver) const;
 
+          // H_i = (d^2 g_i/dx_j^2), 0 <= i,j < n
           void getHessianDoubleFiniteDiff (const vector_t x, Splines_t& splines,
               std::vector<matrix_t>& hessianStack,
               HybridSolver hybridSolver) const;
